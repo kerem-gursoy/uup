@@ -11,6 +11,7 @@ model Product {
   id             Int             @id @default(autoincrement())
   name           String
   barcode        String?         @unique
+  brand          String?
   supplierId     Int?
   supplier       Supplier?       @relation(fields: [supplierId], references: [id])
   priceHistory   PriceHistory[]
@@ -21,6 +22,19 @@ model Supplier {
   id        Int       @id @default(autoincrement())
   name      String
   products  Product[]
+  invoices  Invoice[]
+}
+
+model Invoice {
+  id           Int       @id @default(autoincrement())
+  supplierId   Int
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+
+  originalName String
+  storedPath   String
+  mimeType     String
+  status       String    @default("UPLOADED")
+  createdAt    DateTime  @default(now())
 }
 
 model PriceHistory {

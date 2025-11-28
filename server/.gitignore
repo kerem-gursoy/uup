@@ -3,3 +3,24 @@ node_modules
 .env
 
 /src/generated/prisma
+
+
+
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Enes Ozdogan"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Gul Plastik"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Erkoc"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Kaplan"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Zeki Baba"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Duru Ahsap"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Erdogan Bakalit"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Terlikci"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Ozcan Aski"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Sinan Temizlik"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Celikayna"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Kirazoglu"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Emrah Plastik"}'
+curl -X POST http://localhost:3000/suppliers -H "Content-Type: application/json" -d '{"name":"Kumandaci"}'
+
+
+
+
