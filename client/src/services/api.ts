@@ -250,6 +250,72 @@ export async function uploadInvoice(formData: FormData): Promise<UploadInvoiceRe
 }
 
 // ============================================================================
+// INVOICE PARSING & APPLYING
+// ============================================================================
+
+export interface ParsedInvoiceLine {
+    lineNo: number | null;
+    code: string | null;
+    description: string;
+    barcode: string | null;
+    quantity: number | null;
+    unit: string | null;
+    unitPrice: number | null;
+    totalPrice: number | null;
+    matchedProductId: number | null;
+    matchedProductName: string | null;
+    matchedBrand: string | null;
+    matchScore: number;
+}
+
+export interface ParsedInvoiceResponse {
+    invoiceId: number;
+    supplierId: number;
+    supplierName: string;
+    supplierFromDocument: string | null;
+    issueDate: string | null;
+    currency: string | null;
+    lines: ParsedInvoiceLine[];
+}
+
+export interface ApplyInvoiceLineInput {
+    lineIndex: number;
+    parsedLineNo: number | null;
+    apply: boolean;
+    productId: number | null;
+    quantity: number | null;
+    unitPrice: number | null;
+    applyStock: boolean;
+    applyPrice: boolean;
+}
+
+export interface ApplyInvoiceRequest {
+    lines: ApplyInvoiceLineInput[];
+}
+
+export interface ApplyResult {
+    invoiceId: number;
+    appliedLines: number;
+    skippedLines: number;
+}
+
+export async function parseInvoice(id: number): Promise<ParsedInvoiceResponse> {
+    const response = await fetch(`${API_BASE_URL}/invoices/${id}/parse`, {
+        method: 'POST',
+    });
+    return handleResponse<ParsedInvoiceResponse>(response);
+}
+
+export async function applyInvoice(id: number, payload: ApplyInvoiceRequest): Promise<ApplyResult> {
+    const response = await fetch(`${API_BASE_URL}/invoices/${id}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse<ApplyResult>(response);
+}
+
+// ============================================================================
 // LEGACY EXPORTS (for backward compatibility)
 // ============================================================================
 

@@ -1,84 +1,83 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
-import { Lock } from 'lucide-react';
 
 export default function LoginPage() {
-    const navigate = useNavigate();
-    const [email, setEmail] = useState('');
+    const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const { login } = useAuth();
+    const navigate = useNavigate();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setLoading(true);
 
-        if (!email || !password) {
-            toast.error('Please fill in all fields');
-            return;
-        }
+        try {
+            const res = await fetch('http://localhost:3000/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+                credentials: 'include',
+            });
 
-        setIsLoading(true);
+            const data = await res.json();
 
-        // Simulate network delay
-        setTimeout(() => {
-            setIsLoading(false);
-            toast.success('Signed in (mock)');
+            if (!res.ok) {
+                throw new Error(data.error || 'Authentication failed');
+            }
+
+            login(data.user);
+            toast.success('Logged in successfully');
             navigate('/');
-        }, 1000);
+        } catch (error) {
+            console.error('Auth error:', error);
+            toast.error(error instanceof Error ? error.message : 'Authentication failed');
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-md bg-white rounded-xl shadow-lg p-8 border border-slate-100">
-                <div className="flex flex-col items-center mb-8">
-                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4 text-blue-600">
-                        <Lock size={24} />
-                    </div>
-                    <h1 className="text-2xl font-bold text-slate-900">Sign in</h1>
-                    <p className="text-slate-500 mt-1">Internal inventory access</p>
-                </div>
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+            <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
+                <h1 className="text-2xl font-bold text-center text-slate-900 mb-2">
+                    Welcome Back
+                </h1>
+                <p className="text-center text-slate-500 mb-8">
+                    Sign in to access your account
+                </p>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
+                <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
-                        <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">
-                            Email or Username
-                        </label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
                         <input
-                            id="email"
                             type="text"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                            placeholder="user@example.com"
-                            autoFocus
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none"
+                            required
                         />
                     </div>
-
                     <div>
-                        <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">
-                            Password
-                        </label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
                         <input
-                            id="password"
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                            placeholder="••••••••"
+                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none"
+                            required
                         />
                     </div>
 
                     <button
                         type="submit"
-                        disabled={isLoading}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition-colors disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
+                        disabled={loading}
+                        className="w-full bg-blue-600 text-white font-semibold py-2.5 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                     >
-                        {isLoading ? 'Signing in...' : 'Sign in'}
+                        {loading ? 'Processing...' : 'Sign In'}
                     </button>
-
-                    <p className="text-center text-xs text-slate-400">
-                        For internal use only.
-                    </p>
                 </form>
             </div>
         </div>

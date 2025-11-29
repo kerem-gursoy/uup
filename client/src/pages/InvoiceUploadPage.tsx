@@ -60,9 +60,14 @@ export default function InvoiceUploadPage() {
             formData.append('file', file);
 
             const result = await uploadInvoice(formData);
-            setUploadResult(result);
-            setStep('success');
+            console.log('Upload result:', result);
+
+            if (!result || !result.invoiceId) {
+                throw new Error('Invalid server response: Missing invoice ID');
+            }
+
             toast.success('Invoice uploaded successfully');
+            navigate(`/invoices/${result.invoiceId}/review`);
         } catch (error) {
             console.error('Upload failed:', error);
             const message = error instanceof Error ? error.message : 'Upload failed';
