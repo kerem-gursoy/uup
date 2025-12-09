@@ -1,6 +1,13 @@
 // API base URL - adjust as needed
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
+async function fetchWithCredentials(url: string, options: RequestInit = {}) {
+    return fetch(url, {
+        ...options,
+        credentials: 'include',
+    });
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -94,17 +101,17 @@ async function handleResponse<T>(response: Response): Promise<T> {
 // ============================================================================
 
 export async function getSuppliers(): Promise<Supplier[]> {
-    const response = await fetch(`${API_BASE_URL}/suppliers`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/suppliers`);
     return handleResponse<Supplier[]>(response);
 }
 
 export async function getSupplier(id: number): Promise<Supplier> {
-    const response = await fetch(`${API_BASE_URL}/suppliers/${id}`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/suppliers/${id}`);
     return handleResponse<Supplier>(response);
 }
 
 export async function createSupplier(payload: { name: string }): Promise<Supplier> {
-    const response = await fetch(`${API_BASE_URL}/suppliers`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/suppliers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -113,7 +120,7 @@ export async function createSupplier(payload: { name: string }): Promise<Supplie
 }
 
 export async function updateSupplier(id: number, payload: { name: string }): Promise<Supplier> {
-    const response = await fetch(`${API_BASE_URL}/suppliers/${id}`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/suppliers/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -122,7 +129,7 @@ export async function updateSupplier(id: number, payload: { name: string }): Pro
 }
 
 export async function deleteSupplier(id: number): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/suppliers/${id}`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/suppliers/${id}`, {
         method: 'DELETE',
     });
     if (!response.ok) {
@@ -141,12 +148,12 @@ export async function getProducts(params?: { search?: string; brand?: string }):
     if (params?.brand) searchParams.set('brand', params.brand);
 
     const url = `${API_BASE_URL}/products${searchParams.toString() ? `?${searchParams}` : ''}`;
-    const response = await fetch(url);
+    const response = await fetchWithCredentials(url);
     return handleResponse<Product[]>(response);
 }
 
 export async function getProduct(id: number): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}`);
     return handleResponse<Product>(response);
 }
 
@@ -156,7 +163,7 @@ export async function createProduct(payload: {
     brand?: string | null;
     supplierId?: number | null;
 }): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -170,7 +177,7 @@ export async function updateProduct(id: number, payload: {
     brand?: string | null;
     supplierId?: number | null;
 }): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -179,7 +186,7 @@ export async function updateProduct(id: number, payload: {
 }
 
 export async function deleteProduct(id: number): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}`, {
         method: 'DELETE',
     });
     if (!response.ok) {
@@ -189,7 +196,7 @@ export async function deleteProduct(id: number): Promise<void> {
 }
 
 export async function getProductByBarcode(barcode: string): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products/by-barcode/${encodeURIComponent(barcode)}`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/by-barcode/${encodeURIComponent(barcode)}`);
     return handleResponse<Product>(response);
 }
 
@@ -198,7 +205,7 @@ export async function getProductByBarcode(barcode: string): Promise<Product> {
 // ============================================================================
 
 export async function setProductPrice(id: number, priceCents: number): Promise<PriceHistoryEntry> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}/set-price`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}/set-price`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ priceCents }),
@@ -207,7 +214,7 @@ export async function setProductPrice(id: number, priceCents: number): Promise<P
 }
 
 export async function getPriceHistory(id: number): Promise<PriceHistoryEntry[]> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}/price-history`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}/price-history`);
     return handleResponse<PriceHistoryEntry[]>(response);
 }
 
@@ -215,7 +222,7 @@ export async function adjustProductStock(id: number, payload: {
     quantity: number;
     reason: string;
 }): Promise<AdjustStockResponse> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}/adjust-stock`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}/adjust-stock`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -224,7 +231,7 @@ export async function adjustProductStock(id: number, payload: {
 }
 
 export async function getProductSummary(id: number): Promise<ProductSummary> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}/summary`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}/summary`);
     return handleResponse<ProductSummary>(response);
 }
 
@@ -233,7 +240,7 @@ export async function getProductSummary(id: number): Promise<ProductSummary> {
 // ============================================================================
 
 export async function getLowStock(threshold: number = 5): Promise<LowStockProduct[]> {
-    const response = await fetch(`${API_BASE_URL}/reports/low-stock?threshold=${threshold}`);
+    const response = await fetchWithCredentials(`${API_BASE_URL}/reports/low-stock?threshold=${threshold}`);
     return handleResponse<LowStockProduct[]>(response);
 }
 
@@ -242,7 +249,7 @@ export async function getLowStock(threshold: number = 5): Promise<LowStockProduc
 // ============================================================================
 
 export async function uploadInvoice(formData: FormData): Promise<UploadInvoiceResponse> {
-    const response = await fetch(`${API_BASE_URL}/invoices/upload`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/upload`, {
         method: 'POST',
         body: formData,
     });
@@ -300,14 +307,14 @@ export interface ApplyResult {
 }
 
 export async function parseInvoice(id: number): Promise<ParsedInvoiceResponse> {
-    const response = await fetch(`${API_BASE_URL}/invoices/${id}/parse`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/${id}/parse`, {
         method: 'POST',
     });
     return handleResponse<ParsedInvoiceResponse>(response);
 }
 
 export async function applyInvoice(id: number, payload: ApplyInvoiceRequest): Promise<ApplyResult> {
-    const response = await fetch(`${API_BASE_URL}/invoices/${id}/apply`, {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/${id}/apply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
