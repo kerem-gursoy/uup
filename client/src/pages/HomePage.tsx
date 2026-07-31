@@ -19,6 +19,7 @@ import {
 } from '../services/api';
 import { formatDateRelative, formatMoney } from '../lib/format';
 import { Button, Card, ErrorBlock, LoadingBlock } from '../components/ui';
+import { useT, useTPlural, type t as translate } from '../i18n';
 
 /**
  * The home screen answers one question: what needs me today?
@@ -43,13 +44,13 @@ type Signal = {
     alwaysShow: boolean;
 };
 
-function buildSignals(report: AttentionReport): Signal[] {
+function buildSignals(report: AttentionReport, t: typeof translate): Signal[] {
     return [
         {
             key: 'below-cost',
             count: report.sellingBelowCost,
-            label: 'Sold for less than they cost',
-            detail: 'Every sale of these loses money.',
+            label: t('home.signal.belowCost.label'),
+            detail: t('home.signal.belowCost.detail'),
             to: '/products?filter=below-cost',
             icon: <TrendingDown size={20} />,
             tone: 'urgent',
@@ -58,11 +59,13 @@ function buildSignals(report: AttentionReport): Signal[] {
         {
             key: 'low',
             count: report.lowStock,
+            // Two whole sentences rather than one with a bolted-on clause: the
+            // "at zero" part lands in a different place in Turkish.
             label:
                 report.outOfStock > 0
-                    ? `Running low — ${report.outOfStock} of them at zero`
-                    : 'Running low',
-            detail: `${report.lowStockThreshold} or fewer left.`,
+                    ? t('home.signal.low.labelWithZero', { count: report.outOfStock })
+                    : t('home.signal.low.label'),
+            detail: t('home.signal.low.detail', { threshold: report.lowStockThreshold }),
             to: '/products?filter=low',
             icon: <AlertTriangle size={20} />,
             tone: 'warn',
@@ -71,8 +74,8 @@ function buildSignals(report: AttentionReport): Signal[] {
         {
             key: 'invoices',
             count: report.invoicesToReview,
-            label: 'Invoices to review',
-            detail: 'Uploaded, but their stock and costs are not recorded yet.',
+            label: t('home.signal.invoices.label'),
+            detail: t('home.signal.invoices.detail'),
             to: '/invoices',
             icon: <FileText size={20} />,
             tone: 'info',
@@ -81,8 +84,8 @@ function buildSignals(report: AttentionReport): Signal[] {
         {
             key: 'no-price',
             count: report.missingSellPrice,
-            label: 'Missing a selling price',
-            detail: 'Without one, this app cannot tell you what you earn on them.',
+            label: t('home.signal.noPrice.label'),
+            detail: t('home.signal.noPrice.detail'),
             to: '/products?filter=no-price',
             icon: <Tag size={20} />,
             tone: 'warn',
@@ -91,8 +94,8 @@ function buildSignals(report: AttentionReport): Signal[] {
         {
             key: 'cost-rose',
             count: report.costRoseSincePriceSet,
-            label: "Cost changed, price didn't",
-            detail: 'What you pay went up after you set your price.',
+            label: t('home.signal.costRose.label'),
+            detail: t('home.signal.costRose.detail'),
             to: '/products?filter=cost-rose',
             icon: <TrendingDown size={20} />,
             tone: 'warn',
@@ -108,6 +111,8 @@ const TONES = {
 } as const;
 
 export default function HomePage() {
+    const t = useT();
+    const tPlural = useTPlural();
     const navigate = useNavigate();
 
     const [report, setReport] = useState<AttentionReport | null>(null);
@@ -127,30 +132,30 @@ export default function HomePage() {
             setReport(attention);
             setActivity(recent);
         } catch (err) {
-            setError(errorMessage(err, 'Could not load your shop.'));
+            setError(errorMessage(err, t('error.shopLoad')));
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [t]);
 
     useEffect(() => {
         load();
     }, [load]);
 
-    const signals = report ? buildSignals(report) : [];
+    const signals = report ? buildSignals(report, t) : [];
     const visible = signals.filter((signal) => signal.alwaysShow || signal.count > 0);
     const needsAttention = visible.filter((signal) => signal.count > 0);
 
     return (
         <div className="space-y-5">
             <div>
-                <h1 className="text-2xl font-bold text-slate-900">Today</h1>
+                <h1 className="text-2xl font-bold text-slate-900">{t('home.title')}</h1>
                 <p className="text-slate-500 mt-0.5">
                     {loading
-                        ? 'Checking your shop…'
+                        ? t('home.checking')
                         : needsAttention.length === 0
-                          ? 'Nothing needs attention.'
-                          : `${needsAttention.length} ${needsAttention.length === 1 ? 'thing needs' : 'things need'} attention`}
+                          ? t('home.nothingNeeds')
+                          : tPlural('home.needsAttention', needsAttention.length)}
                 </p>
             </div>
 
@@ -168,9 +173,7 @@ export default function HomePage() {
                         <Card className="p-5 bg-emerald-50 border-emerald-200">
                             <p className="flex items-center gap-3 text-emerald-900">
                                 <CheckCircle2 size={22} className="shrink-0" />
-                                <span className="font-medium">
-                                    Everything is stocked, priced and up to date.
-                                </span>
+                                <span className="font-medium">{t('home.allClear')}</span>
                             </p>
                         </Card>
                     )}
@@ -180,6 +183,7 @@ export default function HomePage() {
                             <SignalRow
                                 key={signal.key}
                                 signal={signal}
+                                clearedLabel={t('home.rowClear')}
                                 onClick={() => navigate(signal.to)}
                             />
                         ))}
@@ -193,7 +197,7 @@ export default function HomePage() {
                             icon={<ScanLine size={20} />}
                             className="min-h-[56px]"
                         >
-                            Scan
+                            {t('home.scan')}
                         </Button>
                         <Button
                             variant="secondary"
@@ -201,14 +205,16 @@ export default function HomePage() {
                             icon={<Plus size={20} />}
                             className="min-h-[56px]"
                         >
-                            Add product
+                            {t('home.addProduct')}
                         </Button>
                     </div>
 
                     {activity.length > 0 && (
                         <Card className="overflow-hidden">
                             <div className="p-4 border-b border-slate-100">
-                                <h2 className="font-semibold text-slate-900">Recent changes</h2>
+                                <h2 className="font-semibold text-slate-900">
+                                    {t('home.recentChanges')}
+                                </h2>
                             </div>
                             <ul className="divide-y divide-slate-100">
                                 {activity.slice(0, 5).map((entry) => (
@@ -223,7 +229,7 @@ export default function HomePage() {
                                                     {entry.productName}
                                                 </p>
                                                 <p className="text-sm text-slate-500">
-                                                    {describeActivity(entry)}
+                                                    {describeActivity(entry, t)}
                                                 </p>
                                             </div>
                                             <span className="text-xs text-slate-400 shrink-0 pt-0.5">
@@ -245,7 +251,15 @@ export default function HomePage() {
  * One row per signal. A zero count is kept but visibly settled, so the list has
  * a stable shape and a cleared item reads as an achievement rather than vanishing.
  */
-function SignalRow({ signal, onClick }: { signal: Signal; onClick: () => void }) {
+function SignalRow({
+    signal,
+    clearedLabel,
+    onClick,
+}: {
+    signal: Signal;
+    clearedLabel: string;
+    onClick: () => void;
+}) {
     const cleared = signal.count === 0;
 
     return (
@@ -270,7 +284,7 @@ function SignalRow({ signal, onClick }: { signal: Signal; onClick: () => void })
                 <span className="min-w-0 flex-1">
                     <span className="block font-semibold text-slate-900">{signal.label}</span>
                     <span className="block text-sm text-slate-500">
-                        {cleared ? 'All clear' : signal.detail}
+                        {cleared ? clearedLabel : signal.detail}
                     </span>
                 </span>
 
@@ -280,16 +294,21 @@ function SignalRow({ signal, onClick }: { signal: Signal; onClick: () => void })
     );
 }
 
-function describeActivity(entry: ActivityEntry): string {
+function describeActivity(entry: ActivityEntry, t: typeof translate): string {
     if (entry.type === 'STOCK' && entry.quantity !== null) {
         const direction = entry.quantity > 0 ? `+${entry.quantity}` : String(entry.quantity);
-        return entry.detail ? `Stock ${direction} — ${entry.detail}` : `Stock ${direction}`;
+        return entry.detail
+            ? t('home.activity.stockDetail', { direction, detail: entry.detail })
+            : t('home.activity.stock', { direction });
     }
 
     if (entry.type === 'PRICE' && entry.priceCents !== null) {
-        const what = entry.priceKind === 'COST' ? 'Cost' : 'Selling price';
-        return `${what} set to ${formatMoney(entry.priceCents)}`;
+        return t('home.activity.price', {
+            what: entry.priceKind === 'COST' ? t('chart.cost') : t('chart.sellingPrice'),
+            amount: formatMoney(entry.priceCents),
+        });
     }
 
+    // Whatever the server wrote, verbatim - it is the shop's own note, not copy.
     return entry.detail;
 }

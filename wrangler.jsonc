@@ -8,6 +8,17 @@
   // Buffer, node:crypto and process.env populated from Workers vars/secrets.
   "compatibility_flags": ["nodejs_compat"],
 
+  // Both stated rather than left to default, because the defaults are opposites
+  // of what this app wants and Wrangler only warns about them.
+  //
+  // workers_dev is the only way in - there is no custom domain.
+  "workers_dev": true,
+  // Preview URLs would publish every past version at its own public hostname,
+  // each one wired to the same live D1 and R2 as production. For an internal
+  // tool that is surface with no upside: a stale version left reachable is a
+  // second app writing to the real inventory.
+  "preview_urls": false,
+
   // Frankfurt. Cloudflare has no "Frankfurt" selector - a Placement Hint naming
   // a cloud region runs the Worker in the Cloudflare datacentre with the lowest
   // latency to it, and aws:eu-central-1 IS Frankfurt.
@@ -32,13 +43,19 @@
     "run_worker_first": ["/api/*"]
   },
 
+  // Without this, a 500 in production leaves no trace: console.error output is
+  // visible only while `wrangler tail` happens to be attached, so anything that
+  // broke overnight is unknowable. Sampling stays at 1 because this app's
+  // request volume is nowhere near the free allowance.
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
   // Created with: npx wrangler d1 create uup-db --location=weur
   // The location is fixed at creation and can never be changed.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "uup-db",
-      "database_id": "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+      "database_id": "41311a67-c0ce-438a-beef-69c5f304452b"
     }
   ],
 
@@ -55,5 +72,8 @@
   // Secrets are never listed here. Set them with:
   //   npx wrangler secret put JWT_SECRET      (openssl rand -base64 48)
   //   npx wrangler secret put GEMINI_API_KEY
-  // For local `wrangler dev`, put the same keys in server/.dev.vars (gitignored).
+  // For local `wrangler dev`, put the same keys in .dev.vars beside this file
+  // (gitignored). Production and local hold DIFFERENT JWT_SECRET values, which
+  // is deliberate: a token minted against a dev machine must not open the
+  // deployed app.
 }

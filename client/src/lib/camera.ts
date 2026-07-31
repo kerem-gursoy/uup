@@ -1,7 +1,12 @@
 /**
  * Camera availability and failure messages, written for people who will not
  * know what a "secure context" or a "MediaStream" is.
+ *
+ * These are plain functions, not components, so they call t() directly rather than
+ * through a hook - which is why t() reads the language when it runs instead of
+ * closing over it.
  */
+import { t } from '../i18n';
 
 /**
  * Why the camera cannot be used, or null when it can be.
@@ -14,11 +19,13 @@ export function cameraUnavailableReason(): string | null {
     if (typeof window === 'undefined') return null;
 
     if (!window.isSecureContext) {
-        return `The camera only works over a secure connection. This page was opened as ${window.location.protocol}//${window.location.host}, so the browser blocks camera access. Use https, or open the app on this computer at localhost.`;
+        return t('camera.insecure', {
+            origin: `${window.location.protocol}//${window.location.host}`,
+        });
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-        return 'This browser cannot use the camera. You can still type the barcode instead.';
+        return t('camera.unsupported');
     }
 
     return null;
@@ -30,17 +37,17 @@ export function describeCameraError(err: unknown): string {
     switch (name) {
         case 'NotAllowedError':
         case 'PermissionDeniedError':
-            return 'Camera permission was refused. Allow camera access for this site in your browser settings, then try again.';
+            return t('camera.denied');
         case 'NotFoundError':
         case 'DevicesNotFoundError':
-            return 'No camera was found on this device.';
+            return t('camera.notFound');
         case 'NotReadableError':
         case 'TrackStartError':
-            return 'The camera is already being used by another app. Close it and try again.';
+            return t('camera.inUse');
         case 'OverconstrainedError':
-            return 'This camera does not support the requested video settings.';
+            return t('camera.constraints');
         default:
-            return 'The camera could not be started. You can still type the barcode instead.';
+            return t('camera.failed');
     }
 }
 

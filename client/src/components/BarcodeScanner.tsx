@@ -9,6 +9,7 @@ import {
     describeCameraError,
 } from '../lib/camera';
 import { Button } from './ui';
+import { useT } from '../i18n';
 
 type Phase = 'starting' | 'scanning' | 'error';
 
@@ -27,8 +28,8 @@ type Phase = 'starting' | 'scanning' | 'error';
  * `onDetected` fires at most once; the parent decides what happens next.
  */
 export default function BarcodeScanner({
-    title = 'Scan a barcode',
-    hint = 'Hold the barcode inside the frame',
+    title,
+    hint,
     onDetected,
     onClose,
 }: {
@@ -37,6 +38,12 @@ export default function BarcodeScanner({
     onDetected: (barcode: string) => void;
     onClose: () => void;
 }) {
+    const t = useT();
+    // Defaulted here rather than in the parameter list: a default value would be
+    // evaluated before the hook has run.
+    const panelTitle = title ?? t('scanner.title');
+    const panelHint = hint ?? t('scanner.hint');
+
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const controlsRef = useRef<IScannerControls | null>(null);
     const detectedRef = useRef(false);
@@ -151,16 +158,16 @@ export default function BarcodeScanner({
             <div
                 role="dialog"
                 aria-modal="true"
-                aria-label={title}
+                aria-label={panelTitle}
                 onClick={(event) => event.stopPropagation()}
                 className="w-full sm:max-w-md bg-white rounded-3xl shadow-2xl shadow-slate-950/30 ring-1 ring-slate-900/5 p-4 pb-5 animate-panel-in"
             >
                 <div className="flex items-center justify-between gap-3 px-1 pb-3">
-                    <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+                    <h2 className="text-lg font-semibold text-slate-900">{panelTitle}</h2>
                     <button
                         type="button"
                         onClick={onClose}
-                        aria-label="Close the scanner"
+                        aria-label={t('scanner.close')}
                         className="w-10 h-10 -mr-1 shrink-0 flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
                     >
                         <X size={22} />
@@ -183,7 +190,7 @@ export default function BarcodeScanner({
                         {phase === 'starting' && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-300">
                                 <Loader2 size={26} className="animate-spin" />
-                                <span className="text-sm">Opening the camera…</span>
+                                <span className="text-sm">{t('scanner.opening')}</span>
                             </div>
                         )}
 
@@ -205,7 +212,7 @@ export default function BarcodeScanner({
                                 </div>
 
                                 <p className="absolute bottom-3 left-3 right-3 text-center text-white text-sm font-medium bg-slate-950/55 backdrop-blur-sm px-3 py-2 rounded-xl">
-                                    {hint}
+                                    {panelHint}
                                 </p>
                             </>
                         )}
@@ -214,12 +221,12 @@ export default function BarcodeScanner({
 
                 <div className="pt-4">
                     <Button variant="secondary" onClick={onClose} className="w-full">
-                        {phase === 'error' ? 'Close' : 'Cancel'}
+                        {phase === 'error' ? t('common.close') : t('common.cancel')}
                     </Button>
                     {phase !== 'error' && (
                         <p className="mt-3 text-center text-sm text-slate-500 flex items-center justify-center gap-1.5">
                             <ScanLine size={15} className="shrink-0" />
-                            Any barcode on the product will do
+                            {t('scanner.anyBarcode')}
                         </p>
                     )}
                 </div>

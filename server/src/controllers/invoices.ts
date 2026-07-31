@@ -3,7 +3,7 @@ import { Request, Response } from "express";
 import { env } from "cloudflare:workers";
 import { parseId } from "../utils/parseId.js";
 import { parseAndMatchInvoice } from "../services/invoiceParsing.js";
-import { applyInvoice } from "../services/invoiceApply.js";
+import { applyInvoice, InvoiceApplyError } from "../services/invoiceApply.js";
 import { ApplyInvoiceRequest } from "../services/invoiceTypes.js";
 
 /**
@@ -191,16 +191,12 @@ export const applyParsedInvoice = async (req: Request, res: Response) => {
     const summary = await applyInvoice(req.prisma, id, body);
     return res.json(summary);
   } catch (err) {
+    // Rejections carry their own status and a message written for the user;
+    // anything else is a genuine fault and says nothing beyond that.
+    if (err instanceof InvoiceApplyError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error("Error applying invoice:", err);
-    if (err instanceof Error && err.message === "Invoice not found") {
-      return res.status(404).json({ error: "Invoice not found" });
-    }
-    if (err instanceof Error && err.message === "Invoice already applied") {
-      return res.status(409).json({ error: "Invoice already applied" });
-    }
-    if (err instanceof Error && err.message.startsWith("Invalid")) {
-      return res.status(400).json({ error: err.message });
-    }
     return res.status(500).json({ error: "Failed to apply invoice" });
   }
 };

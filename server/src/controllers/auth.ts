@@ -21,18 +21,9 @@ export const register = async (req: Request, res: Response) => {
             data: { username, password: hashedPassword },
         });
 
-        // Auto-login after register
-        const token = jwt.sign({ userId: user.id, username: user.username }, getJwtSecret(), {
-            expiresIn: "7d",
-        });
-
-        res.cookie("token", token, {
-            httpOnly: true,
-            secure: true,
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            sameSite: "lax",
-        });
-
+        // No auto-login. This route now sits behind requireAuth, so the caller is
+        // an already-signed-in user adding a colleague - issuing a cookie here
+        // would silently switch them into the account they just created.
         return res.status(201).json({ user: { id: user.id, username: user.username } });
     } catch (error) {
         console.error("Register error:", error);

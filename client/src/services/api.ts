@@ -5,6 +5,8 @@
  *
  * VITE_API_URL remains an escape hatch for pointing at another deployment.
  */
+import { hasKey, raw, t } from '../i18n';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 export class ApiError extends Error {
@@ -23,14 +25,37 @@ export class ApiError extends Error {
         this.status = status;
         this.body = body;
     }
+
+    /**
+     * A stable machine-readable code, when the server sends one alongside the
+     * message. Nothing sets this today - the server speaks only English prose -
+     * but see errorMessage below for why it is read for anyway.
+     */
+    get code(): string | null {
+        const code = this.body?.code;
+        return typeof code === 'string' ? code : null;
+    }
 }
 
 /**
  * The server sends a plain-language `error` string; surfacing it beats a
  * generic "something went wrong" for users who need to know what to fix.
+ *
+ * Those strings are English-only, so a Turkish user still meets English here.
+ * Translating them is a server change, and this is the client half of it done in
+ * advance: if the server ever starts sending `{ error, code }`, a matching
+ * `error.code.*` entry in the dictionary wins over the English prose, and no
+ * screen has to change. Until then the branch is simply never taken.
  */
 export function errorMessage(err: unknown, fallback: string): string {
-    return err instanceof ApiError && err.message ? err.message : fallback;
+    if (!(err instanceof ApiError)) return fallback;
+
+    // raw() rather than t(): the key is only known at runtime, and t()'s argument
+    // checking works off a literal key. Error copy takes no placeholders anyway.
+    const key = `error.code.${err.code}`;
+    if (err.code && hasKey(key)) return raw(key);
+
+    return err.message || fallback;
 }
 
 /** Fired when the server rejects us as unauthenticated, so the app can sign out. */
@@ -51,7 +76,9 @@ async function fetchWithCredentials(url: string, options: RequestInit = {}) {
             // Resolved against the page origin so the message names a real
             // address - API_BASE_URL is now a relative path and would read as
             // the unhelpful "cannot reach the server at /api".
-            `Cannot reach the server at ${new URL(API_BASE_URL, window.location.origin).origin}. Check that it is running and reachable from this device.`
+            t('error.unreachable', {
+                origin: new URL(API_BASE_URL, window.location.origin).origin,
+            })
         );
     }
 }
@@ -486,6 +513,9 @@ export interface ParsedInvoiceLine {
     matchedProductName: string | null;
     matchedBrand: string | null;
     matchScore: number;
+    /** Quantity × unit price does not match the row total printed on the invoice,
+     *  usually a misread decimal separator. Worth showing before it is applied. */
+    priceMismatch: boolean;
 }
 
 export interface ParsedInvoiceResponse {

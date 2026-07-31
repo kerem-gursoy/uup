@@ -20,6 +20,7 @@ import {
     formatDateRelative,
     formatMoney,
     formatMoneyOrBlank,
+    formatPercent,
     parseMoneyToCents,
     profitFrom,
     todayAsInputValue,
@@ -38,8 +39,12 @@ import {
 } from '../components/ui';
 import StockPill from '../components/StockPill';
 import PriceChart from '../components/PriceChart';
+import { useT, useTPlural } from '../i18n';
+import { T } from '../i18n/T';
 
 export default function ProductDetailPage() {
+    const t = useT();
+    const tPlural = useTPlural();
     const { id } = useParams();
     const navigate = useNavigate();
     const productId = Number(id);
@@ -54,7 +59,7 @@ export default function ProductDetailPage() {
 
     const load = useCallback(async () => {
         if (!Number.isInteger(productId) || productId <= 0) {
-            setError('That product link is not valid.');
+            setError(t('error.badProductLink'));
             setLoading(false);
             return;
         }
@@ -69,25 +74,25 @@ export default function ProductDetailPage() {
             setSummary(summaryData);
             setHistory(historyData);
         } catch (err) {
-            setError(errorMessage(err, 'Could not load this product.'));
+            setError(errorMessage(err, t('error.productLoad')));
         } finally {
             setLoading(false);
         }
-    }, [productId]);
+    }, [productId, t]);
 
     useEffect(() => {
         load();
     }, [load]);
 
-    if (loading) return <LoadingBlock label="Loading product…" />;
+    if (loading) return <LoadingBlock label={t('product.edit.loading')} />;
 
     if (error || !summary) {
         return (
             <Card>
-                <ErrorBlock message={error ?? 'Product not found.'} onRetry={load} />
+                <ErrorBlock message={error ?? t('product.detail.notFound')} onRetry={load} />
                 <div className="pb-6 flex justify-center">
                     <Button variant="ghost" onClick={() => navigate('/products')}>
-                        Back to products
+                        {t('product.edit.backToProducts')}
                     </Button>
                 </div>
             </Card>
@@ -104,10 +109,10 @@ export default function ProductDetailPage() {
         try {
             const result = await adjustProductStock(productId, { quantity, reason });
             setStockModalOpen(false);
-            toast.success(`Stock is now ${result.currentStock}`);
+            toast.success(t('product.detail.stockNow', { count: result.currentStock }));
             await load();
         } catch (err) {
-            toast.error(errorMessage(err, 'Could not update the stock.'));
+            toast.error(errorMessage(err, t('error.stockUpdate')));
         }
     };
 
@@ -124,10 +129,10 @@ export default function ProductDetailPage() {
                 });
             }
             setPriceModalOpen(false);
-            toast.success(changes.length > 1 ? 'Prices saved' : 'Price saved');
+            toast.success(tPlural('product.detail.priceSaved', changes.length));
             await load();
         } catch (err) {
-            toast.error(errorMessage(err, 'Could not save the price.'));
+            toast.error(errorMessage(err, t('error.priceSave')));
         }
     };
 
@@ -140,7 +145,7 @@ export default function ProductDetailPage() {
                     className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900 mb-4 min-h-[44px]"
                 >
                     <ArrowLeft size={20} />
-                    Back
+                    {t('common.back')}
                 </button>
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -160,7 +165,7 @@ export default function ProductDetailPage() {
                             icon={<Pencil size={17} />}
                             className="min-h-[44px] px-3 text-sm"
                         >
-                            Edit
+                            {t('product.detail.edit')}
                         </Button>
                     </div>
                 </div>
@@ -174,32 +179,36 @@ export default function ProductDetailPage() {
                     underneath because they are read against each other. */}
                 <StatCard
                     className="col-span-2 sm:col-span-1"
-                    label="In stock"
+                    label={t('product.detail.inStock')}
                     value={String(currentStock)}
-                    caption={currentStock === 1 ? 'item' : 'items'}
-                    actionLabel="Update stock"
+                    caption={tPlural('count.item', currentStock)}
+                    actionLabel={t('product.detail.updateStock')}
                     onEdit={() => setStockModalOpen(true)}
                 />
                 <StatCard
-                    label="Costs you"
+                    label={t('product.costsYou')}
                     value={formatMoneyOrBlank(latestCost?.priceCents)}
                     caption={
                         latestCost
-                            ? `since ${formatDate(latestCost.effectiveFrom)}`
-                            : 'tap to add'
+                            ? t('product.detail.since', {
+                                  date: formatDate(latestCost.effectiveFrom),
+                              })
+                            : t('product.detail.tapToAdd')
                     }
-                    actionLabel="Change cost"
+                    actionLabel={t('product.detail.changeCost')}
                     onEdit={() => setPriceModalOpen(true)}
                 />
                 <StatCard
-                    label="Sells for"
+                    label={t('product.sellsFor')}
                     value={formatMoneyOrBlank(latestSell?.priceCents)}
                     caption={
                         latestSell
-                            ? `since ${formatDate(latestSell.effectiveFrom)}`
-                            : 'tap to add'
+                            ? t('product.detail.since', {
+                                  date: formatDate(latestSell.effectiveFrom),
+                              })
+                            : t('product.detail.tapToAdd')
                     }
-                    actionLabel="Change selling price"
+                    actionLabel={t('product.detail.changeSell')}
                     onEdit={() => setPriceModalOpen(true)}
                     emphasis
                 />
@@ -213,15 +222,24 @@ export default function ProductDetailPage() {
                 >
                     <p className={profit.profitCents >= 0 ? 'text-emerald-900' : 'text-amber-900'}>
                         {profit.profitCents >= 0 ? (
-                            <>
-                                You make <strong>{formatMoney(profit.profitCents)}</strong> on each one
-                                {' '}({profit.marginPercent.toFixed(0)}% of the selling price).
-                            </>
+                            <T
+                                k="product.profit.positive"
+                                values={{
+                                    amount: <strong>{formatMoney(profit.profitCents)}</strong>,
+                                    margin: formatPercent(profit.marginPercent),
+                                }}
+                            />
                         ) : (
-                            <>
-                                Careful: this sells for{' '}
-                                <strong>{formatMoney(Math.abs(profit.profitCents))}</strong> less than it costs you.
-                            </>
+                            <T
+                                k="product.profit.negative"
+                                values={{
+                                    amount: (
+                                        <strong>
+                                            {formatMoney(Math.abs(profit.profitCents))}
+                                        </strong>
+                                    ),
+                                }}
+                            />
                         )}
                     </p>
                 </Card>
@@ -229,10 +247,10 @@ export default function ProductDetailPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Button onClick={() => setStockModalOpen(true)} icon={<Package size={20} />}>
-                    Update stock
+                    {t('product.detail.updateStock')}
                 </Button>
                 <Button variant="secondary" onClick={() => setPriceModalOpen(true)} icon={<Tag size={20} />}>
-                    Change prices
+                    {t('product.detail.changePrices')}
                 </Button>
             </div>
 
@@ -240,9 +258,11 @@ export default function ProductDetailPage() {
                 are its table view: every figure here is also readable as text. */}
             {history.length > 0 && (
                 <Card className="p-5">
-                    <h3 className="font-semibold text-slate-900">Prices over time</h3>
+                    <h3 className="font-semibold text-slate-900">
+                        {t('product.detail.chartTitle')}
+                    </h3>
                     <p className="text-sm text-slate-500 mt-0.5 mb-3">
-                        How much this has cost you, and what you have charged.
+                        {t('product.detail.chartHint')}
                     </p>
                     <PriceChart history={history} />
                 </Card>
@@ -251,16 +271,16 @@ export default function ProductDetailPage() {
             {/* Both price tracks are shown in full, with a date on every entry. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PriceHistoryCard
-                    title="Cost history"
-                    hint="What you paid your supplier, over time."
+                    title={t('product.detail.costHistory')}
+                    hint={t('product.detail.costHistoryHint')}
                     entries={costHistory}
-                    emptyText="No cost recorded yet."
+                    emptyText={t('product.detail.costHistoryEmpty')}
                 />
                 <PriceHistoryCard
-                    title="Selling price history"
-                    hint="What you charged your customers, over time."
+                    title={t('product.detail.sellHistory')}
+                    hint={t('product.detail.sellHistoryHint')}
                     entries={sellHistory}
-                    emptyText="No selling price recorded yet."
+                    emptyText={t('product.detail.sellHistoryEmpty')}
                 />
             </div>
 
@@ -354,6 +374,8 @@ function PriceHistoryCard({
     entries: PriceHistoryEntry[];
     emptyText: string;
 }) {
+    const t = useT();
+
     return (
         <Card className="p-5">
             <h3 className="font-semibold text-slate-900">{title}</h3>
@@ -377,7 +399,7 @@ function PriceHistoryCard({
                                 </span>
                                 {index === 0 && (
                                     <span className="ml-2 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
-                                        Now
+                                        {t('product.detail.now')}
                                     </span>
                                 )}
                             </div>
@@ -390,11 +412,15 @@ function PriceHistoryCard({
 }
 
 function StockMovementsCard({ movements }: { movements: StockMovement[] }) {
+    const t = useT();
+
     return (
         <Card className="p-5">
-            <h3 className="font-semibold text-slate-900 mb-3">Stock changes</h3>
+            <h3 className="font-semibold text-slate-900 mb-3">
+                {t('product.detail.stockChanges')}
+            </h3>
             {movements.length === 0 ? (
-                <p className="text-slate-500 text-sm">Nothing recorded yet.</p>
+                <p className="text-slate-500 text-sm">{t('product.detail.stockChangesEmpty')}</p>
             ) : (
                 <ol className="divide-y divide-slate-100">
                     {movements.slice(0, 8).map((movement) => (
@@ -420,7 +446,19 @@ function StockMovementsCard({ movements }: { movements: StockMovement[] }) {
     );
 }
 
-const STOCK_REASONS = ['Counted the shelf', 'New delivery', 'Sold', 'Damaged', 'Returned'];
+/**
+ * Why the count changed. These are stored on the movement as free text, so a row
+ * reads back in whatever language it was recorded in - switching language does not
+ * rewrite history. Storing a code and translating on display would need the reason
+ * column to stop being free text, which is a server change.
+ */
+const STOCK_REASON_KEYS = [
+    'product.stock.reason.counted',
+    'product.stock.reason.delivery',
+    'product.stock.reason.sold',
+    'product.stock.reason.damaged',
+    'product.stock.reason.returned',
+] as const;
 
 /**
  * Users think in "how many are there now", not in deltas, so the field asks for
@@ -435,8 +473,11 @@ function StockModal({
     onClose: () => void;
     onSave: (quantity: number, reason: string) => Promise<void>;
 }) {
+    const t = useT();
+    const reasons = STOCK_REASON_KEYS.map((key) => t(key));
+
     const [value, setValue] = useState(String(currentStock));
-    const [reason, setReason] = useState(STOCK_REASONS[0]);
+    const [reason, setReason] = useState(reasons[0]!);
     const [saving, setSaving] = useState(false);
 
     const newTotal = Number(value);
@@ -451,30 +492,43 @@ function StockModal({
     };
 
     return (
-        <Modal title="Update stock" onClose={onClose}>
+        <Modal title={t('product.detail.updateStock')} onClose={onClose}>
             <div className="space-y-5">
                 <Field
-                    label="How many are there now?"
+                    label={t('product.stock.howMany')}
                     htmlFor="newStock"
-                    hint={`Currently recorded: ${currentStock}`}
-                    error={invalid ? 'Enter a whole number of zero or more.' : undefined}
+                    hint={t('product.stock.currently', { count: currentStock })}
+                    error={invalid ? t('product.stock.invalid') : undefined}
                 >
                     <QuantityInput id="newStock" value={value} onChange={setValue} />
                 </Field>
 
                 {!invalid && difference !== 0 && (
                     <p className="text-base text-slate-600">
-                        That is{' '}
-                        <strong className={difference > 0 ? 'text-emerald-700' : 'text-red-700'}>
-                            {difference > 0 ? `${difference} more` : `${Math.abs(difference)} fewer`}
-                        </strong>{' '}
-                        than before.
+                        <T
+                            k="product.stock.thatIs"
+                            values={{
+                                difference: (
+                                    <strong
+                                        className={
+                                            difference > 0 ? 'text-emerald-700' : 'text-red-700'
+                                        }
+                                    >
+                                        {difference > 0
+                                            ? t('product.stock.more', { count: difference })
+                                            : t('product.stock.fewer', {
+                                                  count: Math.abs(difference),
+                                              })}
+                                    </strong>
+                                ),
+                            }}
+                        />
                     </p>
                 )}
 
-                <Field label="Why did it change?" htmlFor="reason">
+                <Field label={t('product.stock.why')} htmlFor="reason">
                     <Select id="reason" value={reason} onChange={(event) => setReason(event.target.value)}>
-                        {STOCK_REASONS.map((option) => (
+                        {reasons.map((option) => (
                             <option key={option}>{option}</option>
                         ))}
                     </Select>
@@ -482,10 +536,10 @@ function StockModal({
 
                 <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                     <Button variant="secondary" onClick={onClose}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button onClick={submit} busy={saving} disabled={invalid || difference === 0}>
-                        Save
+                        {t('common.save')}
                     </Button>
                 </div>
             </div>
@@ -504,18 +558,32 @@ const MARKUPS = [70, 100, 150, 200] as const;
  * size of the change is what catches a slipped decimal point before it is saved.
  */
 function PriceDelta({ previous, next }: { previous: number | null; next: number | null }) {
+    const t = useT();
+
     if (next === null || previous === null || next === previous) return null;
 
     const difference = next - previous;
     const percent = previous > 0 ? Math.abs((difference / previous) * 100) : null;
 
+    const direction =
+        difference > 0
+            ? t('product.price.up', { amount: formatMoney(difference) })
+            : t('product.price.down', { amount: formatMoney(Math.abs(difference)) });
+
     return (
         <p className="mt-2 text-sm text-slate-600">
-            Was <span className="tabular-nums">{formatMoney(previous)}</span> —{' '}
-            <strong className={difference > 0 ? 'text-slate-900' : 'text-slate-900'}>
-                {difference > 0 ? 'up' : 'down'} {formatMoney(Math.abs(difference))}
-                {percent !== null && ` (${percent.toFixed(0)}%)`}
-            </strong>
+            <T
+                k="product.price.was"
+                values={{
+                    previous: <span className="tabular-nums">{formatMoney(previous)}</span>,
+                    change: (
+                        <strong className="text-slate-900">
+                            {direction}
+                            {percent !== null && ` (${formatPercent(percent)})`}
+                        </strong>
+                    ),
+                }}
+            />
         </p>
     );
 }
@@ -538,6 +606,7 @@ function PriceModal({
         effectiveFrom: string
     ) => Promise<void>;
 }) {
+    const t = useT();
     const asInput = (cents: number | null) => (cents === null ? '' : centsToInputValue(cents));
 
     const [cost, setCost] = useState(asInput(latestCostCents));
@@ -569,23 +638,31 @@ function PriceModal({
     };
 
     return (
-        <Modal title="Change prices" onClose={onClose}>
+        <Modal title={t('product.detail.changePrices')} onClose={onClose}>
             <div className="space-y-5">
                 <Field
-                    label="Cost"
+                    label={t('product.form.cost')}
                     htmlFor="costEdit"
-                    hint="What you pay your supplier for one."
-                    error={costInvalid ? 'Enter an amount, for example 12,50.' : undefined}
+                    hint={t('product.form.costHint')}
+                    error={
+                        costInvalid
+                            ? t('product.error.amount', { example: centsToInputValue(1250) })
+                            : undefined
+                    }
                 >
                     <MoneyInput id="costEdit" value={cost} onChange={setCost} invalid={costInvalid} />
                     <PriceDelta previous={latestCostCents} next={costCents} />
                 </Field>
 
                 <Field
-                    label="Selling price"
+                    label={t('product.form.sell')}
                     htmlFor="sellEdit"
-                    hint="What your customer pays for one."
-                    error={sellInvalid ? 'Enter an amount, for example 19,99.' : undefined}
+                    hint={t('product.form.sellHint')}
+                    error={
+                        sellInvalid
+                            ? t('product.error.amount', { example: centsToInputValue(1999) })
+                            : undefined
+                    }
                 >
                     <MoneyInput id="sellEdit" value={sell} onChange={setSell} invalid={sellInvalid} />
                     <PriceDelta previous={latestSellCents} next={sellCents} />
@@ -596,7 +673,7 @@ function PriceModal({
                 {costCents !== null && (
                     <div>
                         <p className="text-sm text-slate-600 mb-2">
-                            Or add a markup to the cost:
+                            {t('product.price.markupHint')}
                         </p>
                         <div className="flex flex-wrap gap-2">
                             {MARKUPS.map((markup) => {
@@ -608,7 +685,9 @@ function PriceModal({
                                         onClick={() => setSell(centsToInputValue(suggested))}
                                         className="min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors"
                                     >
-                                        +{markup}%
+                                        {t('product.price.markup', {
+                                            percent: formatPercent(markup),
+                                        })}
                                         <span className="ml-1.5 text-slate-500 tabular-nums">
                                             {formatMoney(suggested)}
                                         </span>
@@ -628,23 +707,32 @@ function PriceModal({
                         }`}
                     >
                         {profit.profitCents >= 0 ? (
-                            <>
-                                You make <strong>{formatMoney(profit.profitCents)}</strong> on each one
-                                {' '}({profit.marginPercent.toFixed(0)}% of the selling price).
-                            </>
+                            <T
+                                k="product.profit.positive"
+                                values={{
+                                    amount: <strong>{formatMoney(profit.profitCents)}</strong>,
+                                    margin: formatPercent(profit.marginPercent),
+                                }}
+                            />
                         ) : (
-                            <>
-                                This would sell for{' '}
-                                <strong>{formatMoney(Math.abs(profit.profitCents))}</strong> less than it costs you.
-                            </>
+                            <T
+                                k="product.profit.negativeWould"
+                                values={{
+                                    amount: (
+                                        <strong>
+                                            {formatMoney(Math.abs(profit.profitCents))}
+                                        </strong>
+                                    ),
+                                }}
+                            />
                         )}
                     </div>
                 )}
 
                 <Field
-                    label="Effective from"
+                    label={t('product.price.effectiveFrom')}
                     htmlFor="priceDateEdit"
-                    hint="Set an earlier date to record a price you have been using for a while."
+                    hint={t('product.price.effectiveFromHint')}
                 >
                     <TextInput
                         id="priceDateEdit"
@@ -655,20 +743,18 @@ function PriceModal({
                     />
                 </Field>
 
-                <p className="text-sm text-slate-500">
-                    Earlier prices are kept, so you can always look back at what this used to cost.
-                </p>
+                <p className="text-sm text-slate-500">{t('product.price.keptNote')}</p>
 
                 <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                     <Button variant="secondary" onClick={onClose}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button
                         onClick={submit}
                         busy={saving}
                         disabled={costInvalid || sellInvalid || changes.length === 0}
                     >
-                        Save
+                        {t('common.save')}
                     </Button>
                 </div>
             </div>

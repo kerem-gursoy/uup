@@ -4,6 +4,7 @@ import { CheckCircle2, ChevronRight, FileText, Upload } from 'lucide-react';
 import { errorMessage, getInvoices, type InvoiceSummary } from '../services/api';
 import { formatDateRelative } from '../lib/format';
 import { Button, Card, EmptyBlock, ErrorBlock, LoadingBlock } from '../components/ui';
+import { useT } from '../i18n';
 
 /**
  * The invoices that have been uploaded, and whether their stock and costs have
@@ -14,6 +15,7 @@ import { Button, Card, EmptyBlock, ErrorBlock, LoadingBlock } from '../component
  * still waiting are listed first, since they are the ones representing work.
  */
 export default function InvoiceListPage() {
+    const t = useT();
     const navigate = useNavigate();
 
     const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
@@ -26,11 +28,11 @@ export default function InvoiceListPage() {
         try {
             setInvoices(await getInvoices());
         } catch (err) {
-            setError(errorMessage(err, 'Could not load your invoices.'));
+            setError(errorMessage(err, t('error.invoicesLoad')));
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [t]);
 
     useEffect(() => {
         load();
@@ -43,25 +45,27 @@ export default function InvoiceListPage() {
         <div className="space-y-5">
             <div className="flex items-start justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Invoices</h1>
+                    <h1 className="text-2xl font-bold text-slate-900">
+                        {t('invoice.list.title')}
+                    </h1>
                     <p className="text-slate-500 text-sm mt-0.5">
                         {loading
-                            ? 'Loading…'
+                            ? t('common.loading')
                             : waiting.length > 0
-                              ? `${waiting.length} waiting to be reviewed`
-                              : 'All reviewed'}
+                              ? t('invoice.list.waiting', { count: waiting.length })
+                              : t('invoice.list.allReviewed')}
                     </p>
                 </div>
                 <Button
                     onClick={() => navigate('/invoices/upload')}
                     icon={<Upload size={20} />}
                 >
-                    Upload
+                    {t('invoice.list.upload')}
                 </Button>
             </div>
 
             {loading ? (
-                <LoadingBlock label="Loading invoices…" />
+                <LoadingBlock label={t('invoice.list.loading')} />
             ) : error ? (
                 <Card>
                     <ErrorBlock message={error} onRetry={load} />
@@ -70,11 +74,11 @@ export default function InvoiceListPage() {
                 <Card>
                     <EmptyBlock
                         icon={<FileText size={26} />}
-                        title="No invoices yet"
-                        description="Photograph a supplier invoice and the app will read the lines off it for you."
+                        title={t('invoice.list.empty')}
+                        description={t('invoice.list.emptyHint')}
                         action={
                             <Button onClick={() => navigate('/invoices/upload')} icon={<Upload size={20} />}>
-                                Upload an invoice
+                                {t('invoice.list.uploadOne')}
                             </Button>
                         }
                     />
@@ -83,7 +87,9 @@ export default function InvoiceListPage() {
                 <div className="space-y-5">
                     {waiting.length > 0 && (
                         <section className="space-y-2.5">
-                            <h2 className="font-semibold text-slate-900">Waiting for you</h2>
+                            <h2 className="font-semibold text-slate-900">
+                                {t('invoice.list.waitingHeading')}
+                            </h2>
                             <ul className="space-y-2.5">
                                 {waiting.map((invoice) => (
                                     <InvoiceRow
@@ -98,7 +104,9 @@ export default function InvoiceListPage() {
 
                     {done.length > 0 && (
                         <section className="space-y-2.5">
-                            <h2 className="font-semibold text-slate-900">Already recorded</h2>
+                            <h2 className="font-semibold text-slate-900">
+                                {t('invoice.list.doneHeading')}
+                            </h2>
                             <ul className="space-y-2.5">
                                 {done.map((invoice) => (
                                     <InvoiceRow key={invoice.id} invoice={invoice} />
@@ -119,6 +127,7 @@ function InvoiceRow({
     invoice: InvoiceSummary;
     onClick?: () => void;
 }) {
+    const t = useT();
     const applied = invoice.status === 'APPLIED';
 
     const body = (
@@ -134,11 +143,11 @@ function InvoiceRow({
             {applied ? (
                 <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">
                     <CheckCircle2 size={15} />
-                    Recorded
+                    {t('invoice.list.recorded')}
                 </span>
             ) : (
                 <span className="shrink-0 inline-flex items-center gap-1 text-sm font-semibold text-blue-700">
-                    Review
+                    {t('invoice.list.review')}
                     <ChevronRight size={17} />
                 </span>
             )}

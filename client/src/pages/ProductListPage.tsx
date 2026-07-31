@@ -8,28 +8,62 @@ import {
     type ProductWithNumbers,
 } from '../services/api';
 
-/** Wording for each subset the home screen can send the user here with. */
-const FILTERS: Record<ProductFilter, { title: string; empty: string }> = {
-    low: { title: 'Running low', empty: 'Nothing is running low.' },
-    'no-price': {
-        title: 'Missing a selling price',
-        empty: 'Every product has a selling price.',
-    },
-    'cost-rose': {
-        title: "Cost changed, price didn't",
-        empty: 'No costs have moved since you set your prices.',
-    },
-    'below-cost': {
-        title: 'Sold for less than they cost',
-        empty: 'Nothing is priced below cost.',
-    },
-};
 import { useDebounce } from '../hooks/useDebounce';
 import { formatMoneyOrBlank } from '../lib/format';
 import { Button, Card, ErrorBlock, EmptyBlock, LoadingBlock, TextInput } from '../components/ui';
 import StockPill from '../components/StockPill';
+import { useT, useTPlural, type t as translate } from '../i18n';
+import { T } from '../i18n/T';
+
+const PRODUCT_FILTERS = ['low', 'no-price', 'cost-rose', 'below-cost'] as const;
+
+/**
+ * Wording for each subset the home screen can send the user here with.
+ *
+ * Written as a switch rather than a `filter.${key}.title` template, because the
+ * template would need a cast to TranslationKey and that cast is precisely what
+ * stops the compiler noticing a key that does not exist.
+ *
+ * `inline` is the form that reads inside "Showing only …". It is written out as
+ * its own phrase rather than lowercasing `title` at runtime: Turkish has no safe
+ * locale-less case fold - "İade".toLowerCase() grows a combining dot - and the two
+ * languages want different wording here anyway.
+ */
+function filterCopy(
+    filter: ProductFilter,
+    t: typeof translate
+): { title: string; inline: string; empty: string } {
+    switch (filter) {
+        case 'low':
+            return {
+                title: t('filter.low.title'),
+                inline: t('filter.low.inline'),
+                empty: t('filter.low.empty'),
+            };
+        case 'no-price':
+            return {
+                title: t('filter.noPrice.title'),
+                inline: t('filter.noPrice.inline'),
+                empty: t('filter.noPrice.empty'),
+            };
+        case 'cost-rose':
+            return {
+                title: t('filter.costRose.title'),
+                inline: t('filter.costRose.inline'),
+                empty: t('filter.costRose.empty'),
+            };
+        case 'below-cost':
+            return {
+                title: t('filter.belowCost.title'),
+                inline: t('filter.belowCost.inline'),
+                empty: t('filter.belowCost.empty'),
+            };
+    }
+}
 
 export default function ProductListPage() {
+    const t = useT();
+    const tPlural = useTPlural();
     const navigate = useNavigate();
 
     const [products, setProducts] = useState<ProductWithNumbers[]>([]);
@@ -42,7 +76,10 @@ export default function ProductListPage() {
     // say so, so the shorter list is never mistaken for the whole catalogue.
     const [searchParams, setSearchParams] = useSearchParams();
     const filterParam = searchParams.get('filter');
-    const filter = FILTERS[filterParam as ProductFilter] ? (filterParam as ProductFilter) : null;
+    const filter = PRODUCT_FILTERS.includes(filterParam as ProductFilter)
+        ? (filterParam as ProductFilter)
+        : null;
+    const copy = filter ? filterCopy(filter, t) : null;
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -55,11 +92,11 @@ export default function ProductListPage() {
                 })
             );
         } catch (err) {
-            setError(errorMessage(err, 'Could not load your products.'));
+            setError(errorMessage(err, t('error.productsLoad')));
         } finally {
             setLoading(false);
         }
-    }, [debouncedSearch, filter]);
+    }, [debouncedSearch, filter, t]);
 
     useEffect(() => {
         load();
@@ -70,31 +107,34 @@ export default function ProductListPage() {
             <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                     <h1 className="text-2xl font-bold text-slate-900">
-                        {filter ? FILTERS[filter].title : 'Products'}
+                        {copy ? copy.title : t('product.list.title')}
                     </h1>
                     <p className="text-slate-500 text-sm mt-0.5">
                         {loading
-                            ? 'Loading…'
-                            : `${products.length} ${products.length === 1 ? 'product' : 'products'}`}
+                            ? t('common.loading')
+                            : tPlural('count.product', products.length)}
                     </p>
                 </div>
                 <Button onClick={() => navigate('/products/new')} icon={<Plus size={20} />}>
-                    Add
+                    {t('product.list.add')}
                 </Button>
             </div>
 
             {/* Makes the narrowed list obvious, and one tap gets out of it. */}
-            {filter && (
+            {copy && (
                 <button
                     type="button"
                     onClick={() => setSearchParams({}, { replace: true })}
                     className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 hover:bg-blue-100 transition-colors min-h-[52px]"
                 >
                     <span className="text-left">
-                        Showing only <strong>{FILTERS[filter].title.toLowerCase()}</strong>
+                        <T
+                            k="product.list.showingOnly"
+                            values={{ filter: <strong>{copy.inline}</strong> }}
+                        />
                     </span>
                     <span className="flex items-center gap-1 font-semibold shrink-0">
-                        Show all
+                        {t('product.list.showAll')}
                         <X size={17} />
                     </span>
                 </button>
@@ -106,14 +146,14 @@ export default function ProductListPage() {
                     type="search"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Search by name, barcode or brand"
-                    aria-label="Search products"
+                    placeholder={t('product.list.searchPlaceholder')}
+                    aria-label={t('product.list.searchLabel')}
                     className="pl-12"
                 />
             </div>
 
             {loading ? (
-                <LoadingBlock label="Loading products…" />
+                <LoadingBlock label={t('product.list.loading')} />
             ) : error ? (
                 <Card>
                     <ErrorBlock message={error} onRetry={load} />
@@ -130,35 +170,39 @@ export default function ProductListPage() {
                 </div>
             ) : (
                 <Card>
-                    {filter && !searchQuery ? (
+                    {copy && !searchQuery ? (
                         // Reaching an empty filtered list is good news, not a
                         // failure - it means the thing was dealt with.
                         <EmptyBlock
                             icon={<PackageOpen size={26} />}
-                            title="Nothing left here"
-                            description={FILTERS[filter].empty}
+                            title={t('product.list.nothingLeft')}
+                            description={copy.empty}
                             action={
                                 <Button
                                     variant="secondary"
                                     onClick={() => setSearchParams({}, { replace: true })}
                                 >
-                                    Show all products
+                                    {t('product.list.showAllProducts')}
                                 </Button>
                             }
                         />
                     ) : (
                         <EmptyBlock
                             icon={<PackageOpen size={26} />}
-                            title={searchQuery ? 'Nothing matched that search' : 'No products yet'}
+                            title={
+                                searchQuery
+                                    ? t('product.list.noMatch')
+                                    : t('product.list.empty')
+                            }
                             description={
                                 searchQuery
-                                    ? 'Try part of the name, or a different spelling.'
-                                    : 'Add your first product to start tracking what you have and what it is worth.'
+                                    ? t('product.list.noMatchHint')
+                                    : t('product.list.emptyHint')
                             }
                             action={
                                 searchQuery ? undefined : (
                                     <Button onClick={() => navigate('/products/new')} icon={<Plus size={20} />}>
-                                        Add a product
+                                        {t('product.list.addProduct')}
                                     </Button>
                                 )
                             }
@@ -176,6 +220,7 @@ export default function ProductListPage() {
  * number because it is the one quoted to customers.
  */
 function ProductCard({ product, onClick }: { product: ProductWithNumbers; onClick: () => void }) {
+    const t = useT();
     const subtitle = [product.brand, product.supplier?.name].filter(Boolean).join(' • ');
 
     return (
@@ -199,13 +244,13 @@ function ProductCard({ product, onClick }: { product: ProductWithNumbers; onClic
 
             <div className="flex items-end justify-between gap-4 mt-3 pt-3 border-t border-slate-100">
                 <div>
-                    <p className="text-xs text-slate-500">Sells for</p>
+                    <p className="text-xs text-slate-500">{t('product.sellsFor')}</p>
                     <p className="text-lg font-bold text-slate-900 tabular-nums">
                         {formatMoneyOrBlank(product.latestSell?.priceCents)}
                     </p>
                 </div>
                 <div className="text-right">
-                    <p className="text-xs text-slate-500">Costs you</p>
+                    <p className="text-xs text-slate-500">{t('product.costsYou')}</p>
                     <p className="text-base font-medium text-slate-600 tabular-nums">
                         {formatMoneyOrBlank(product.latestCost?.priceCents)}
                     </p>

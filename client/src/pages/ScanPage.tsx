@@ -5,8 +5,10 @@ import { toast } from 'sonner';
 import { ApiError, errorMessage, getProductByBarcode } from '../services/api';
 import BarcodeScanner from '../components/BarcodeScanner';
 import { Button, Card, Field, Modal, TextInput } from '../components/ui';
+import { useT } from '../i18n';
 
 export default function ScanPage() {
+    const t = useT();
     const navigate = useNavigate();
 
     const [barcode, setBarcode] = useState('');
@@ -29,7 +31,7 @@ export default function ScanPage() {
                 setUnknownBarcode(code);
             } else {
                 console.error('Barcode lookup failed:', err);
-                toast.error(errorMessage(err, 'Could not look up that barcode.'));
+                toast.error(errorMessage(err, t('error.barcodeLookup')));
             }
         } finally {
             setIsSearching(false);
@@ -51,10 +53,8 @@ export default function ScanPage() {
     return (
         <div className="space-y-5">
             <div>
-                <h1 className="text-2xl font-bold text-slate-900">Find a product</h1>
-                <p className="text-slate-500 mt-0.5">
-                    Scan its barcode with the camera, or type the number.
-                </p>
+                <h1 className="text-2xl font-bold text-slate-900">{t('scan.title')}</h1>
+                <p className="text-slate-500 mt-0.5">{t('scan.subtitle')}</p>
             </div>
 
             <Button
@@ -63,21 +63,21 @@ export default function ScanPage() {
                 busy={isSearching}
                 className="w-full min-h-[64px] text-lg"
             >
-                {isSearching ? 'Looking…' : 'Scan with camera'}
+                {isSearching ? t('scan.looking') : t('scan.withCamera')}
             </Button>
 
             <Card className="p-5">
                 <form onSubmit={handleManualSearch} className="space-y-4">
                     <Field
-                        label="Or type the barcode"
+                        label={t('scan.manualLabel')}
                         htmlFor="manualBarcode"
-                        hint="Works even when the camera does not."
+                        hint={t('scan.manualHint')}
                     >
                         <TextInput
                             id="manualBarcode"
                             value={barcode}
                             onChange={(event) => setBarcode(event.target.value)}
-                            placeholder="For example 8693240002044"
+                            placeholder={t('scan.manualPlaceholder')}
                             inputMode="numeric"
                             disabled={isSearching}
                         />
@@ -91,10 +91,10 @@ export default function ScanPage() {
                         {isSearching ? (
                             <>
                                 <Loader2 size={18} className="animate-spin" />
-                                Looking…
+                                {t('scan.looking')}
                             </>
                         ) : (
-                            'Find product'
+                            t('scan.find')
                         )}
                     </Button>
                 </form>
@@ -102,7 +102,7 @@ export default function ScanPage() {
 
             {scannerOpen && (
                 <BarcodeScanner
-                    title="Scan a product"
+                    title={t('scan.dialogTitle')}
                     onDetected={handleDetected}
                     onClose={() => setScannerOpen(false)}
                 />
@@ -144,24 +144,23 @@ function UnknownBarcodeDialog({
     onAddProduct: () => void;
     onClose: () => void;
 }) {
+    const t = useT();
+
     return (
-        <Modal title="This barcode is not in your list yet" onClose={onClose}>
+        <Modal title={t('scan.unknownTitle')} onClose={onClose}>
             <div className="space-y-5">
                 <div>
-                    <p className="text-slate-600">You scanned</p>
+                    <p className="text-slate-600">{t('scan.youScanned')}</p>
                     <p className="font-mono text-lg text-slate-900 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mt-1 break-all">
                         {barcode}
                     </p>
                 </div>
 
-                <p className="text-slate-600">
-                    No product has this barcode. You can add it as a new product, or scan a
-                    different one.
-                </p>
+                <p className="text-slate-600">{t('scan.unknownBody')}</p>
 
                 <div className="space-y-3">
                     <Button onClick={onAddProduct} icon={<Plus size={20} />} className="w-full">
-                        Add this as a new product
+                        {t('scan.addAsNew')}
                     </Button>
                     <Button
                         variant="secondary"
@@ -169,10 +168,10 @@ function UnknownBarcodeDialog({
                         icon={<RotateCcw size={20} />}
                         className="w-full"
                     >
-                        Scan another barcode
+                        {t('scan.scanAnother')}
                     </Button>
                     <Button variant="ghost" onClick={onClose} className="w-full">
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                 </div>
             </div>

@@ -20,6 +20,8 @@ import {
     TextInput,
 } from '../components/ui';
 import SupplierDialog from '../components/SupplierDialog';
+import { compareNames } from '../lib/format';
+import { useT } from '../i18n';
 
 /**
  * Edits the details of an existing product.
@@ -31,6 +33,7 @@ import SupplierDialog from '../components/SupplierDialog';
  * product page so their history stays intact.
  */
 export default function EditProductPage() {
+    const t = useT();
     const { id } = useParams();
     const navigate = useNavigate();
     const productId = Number(id);
@@ -49,7 +52,7 @@ export default function EditProductPage() {
 
     const load = useCallback(async () => {
         if (!Number.isInteger(productId) || productId <= 0) {
-            setLoadError('That product link is not valid.');
+            setLoadError(t('error.badProductLink'));
             setLoading(false);
             return;
         }
@@ -69,11 +72,11 @@ export default function EditProductPage() {
             setBarcode(summary.product.barcode);
             setSuppliers(supplierList);
         } catch (err) {
-            setLoadError(errorMessage(err, 'Could not load this product.'));
+            setLoadError(errorMessage(err, t('error.productLoad')));
         } finally {
             setLoading(false);
         }
-    }, [productId]);
+    }, [productId, t]);
 
     useEffect(() => {
         load();
@@ -83,7 +86,7 @@ export default function EditProductPage() {
         event.preventDefault();
 
         if (!name.trim()) {
-            setNameError('Please give the product a name.');
+            setNameError(t('product.error.nameRequired'));
             return;
         }
 
@@ -97,16 +100,16 @@ export default function EditProductPage() {
                 supplierId: supplierId ? Number(supplierId) : null,
             });
 
-            toast.success('Product updated');
+            toast.success(t('product.edit.saved'));
             navigate(`/products/${productId}`, { replace: true });
         } catch (err) {
-            toast.error(errorMessage(err, 'Could not save your changes.'));
+            toast.error(errorMessage(err, t('error.productSave')));
         } finally {
             setSaving(false);
         }
     };
 
-    if (loading) return <LoadingBlock label="Loading product…" />;
+    if (loading) return <LoadingBlock label={t('product.edit.loading')} />;
 
     if (loadError) {
         return (
@@ -114,7 +117,7 @@ export default function EditProductPage() {
                 <ErrorBlock message={loadError} onRetry={load} />
                 <div className="pb-6 flex justify-center">
                     <Button variant="ghost" onClick={() => navigate('/products')}>
-                        Back to products
+                        {t('product.edit.backToProducts')}
                     </Button>
                 </div>
             </Card>
@@ -130,17 +133,18 @@ export default function EditProductPage() {
                     className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900 mb-4 min-h-[44px]"
                 >
                     <ArrowLeft size={20} />
-                    Back
+                    {t('common.back')}
                 </button>
-                <h1 className="text-2xl font-bold text-slate-900">Edit product</h1>
-                <p className="text-slate-500 mt-1">
-                    Change the details. Prices and stock are changed on the product page, so
-                    their history is kept.
-                </p>
+                <h1 className="text-2xl font-bold text-slate-900">{t('product.edit.title')}</h1>
+                <p className="text-slate-500 mt-1">{t('product.edit.subtitle')}</p>
             </div>
 
-            <Section title="Details">
-                <Field label="Product name" htmlFor="name" error={nameError ?? undefined}>
+            <Section title={t('product.edit.details')}>
+                <Field
+                    label={t('product.form.name')}
+                    htmlFor="name"
+                    error={nameError ?? undefined}
+                >
                     <TextInput
                         id="name"
                         value={name}
@@ -153,7 +157,7 @@ export default function EditProductPage() {
                     />
                 </Field>
 
-                <Field label="Brand" htmlFor="brand" optional>
+                <Field label={t('product.form.brand')} htmlFor="brand" optional>
                     <TextInput
                         id="brand"
                         value={brand}
@@ -161,19 +165,26 @@ export default function EditProductPage() {
                     />
                 </Field>
 
-                <Field label="Supplier" htmlFor="supplier" optional hint="Who you buy it from.">
+                <Field
+                    label={t('product.form.supplier')}
+                    htmlFor="supplier"
+                    optional
+                    hint={t('product.form.supplierHint')}
+                >
                     <div className="flex gap-3">
                         <Select
                             id="supplier"
                             value={supplierId}
                             onChange={(event) => setSupplierId(event.target.value)}
                         >
-                            <option value="">Not set</option>
-                            {suppliers.map((supplier) => (
-                                <option key={supplier.id} value={supplier.id}>
-                                    {supplier.name}
-                                </option>
-                            ))}
+                            <option value="">{t('product.form.notSet')}</option>
+                            {[...suppliers]
+                                .sort((a, b) => compareNames(a.name, b.name))
+                                .map((supplier) => (
+                                    <option key={supplier.id} value={supplier.id}>
+                                        {supplier.name}
+                                    </option>
+                                ))}
                         </Select>
                         <Button
                             type="button"
@@ -182,7 +193,7 @@ export default function EditProductPage() {
                             icon={<Plus size={20} />}
                             className="shrink-0 px-4"
                         >
-                            New
+                            {t('product.form.newSupplier')}
                         </Button>
                     </div>
                 </Field>
@@ -190,16 +201,16 @@ export default function EditProductPage() {
 
             {/* Shown, but visibly locked: the greyed field and padlock say "not
                 editable" before the user tries and wonders why nothing happens. */}
-            <Section title="Barcode">
+            <Section title={t('product.edit.barcodeSection')}>
                 <Field
-                    label="Barcode"
+                    label={t('product.form.barcode')}
                     htmlFor="barcodeLocked"
-                    hint="This cannot be changed. It is printed on the product, and changing it here would stop the product being found by scanning."
+                    hint={t('product.edit.barcodeLockedHint')}
                 >
                     <div className="relative">
                         <TextInput
                             id="barcodeLocked"
-                            value={barcode ?? 'No barcode saved'}
+                            value={barcode ?? t('product.edit.noBarcode')}
                             readOnly
                             disabled
                             className="bg-slate-100 text-slate-500 pr-12 cursor-not-allowed"
@@ -219,10 +230,10 @@ export default function EditProductPage() {
                     variant="secondary"
                     onClick={() => navigate(`/products/${productId}`)}
                 >
-                    Cancel
+                    {t('common.cancel')}
                 </Button>
                 <Button type="submit" busy={saving} icon={<Check size={20} />}>
-                    {saving ? 'Saving…' : 'Save changes'}
+                    {saving ? t('product.edit.saving') : t('product.edit.submit')}
                 </Button>
             </div>
 
@@ -230,16 +241,16 @@ export default function EditProductPage() {
                 <SupplierDialog
                     onSaved={(supplier) => {
                         setSuppliers((current) =>
-                            [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
+                            [...current, supplier].sort((a, b) => compareNames(a.name, b.name))
                         );
                         setSupplierId(String(supplier.id));
                         setSupplierDialogOpen(false);
-                        toast.success(`${supplier.name} added`);
+                        toast.success(t('supplier.list.added', { name: supplier.name }));
                     }}
                     onUseExisting={(supplier) => {
                         setSupplierId(String(supplier.id));
                         setSupplierDialogOpen(false);
-                        toast.info(`Using ${supplier.name}`);
+                        toast.info(t('product.form.usingSupplier', { name: supplier.name }));
                     }}
                     onClose={() => setSupplierDialogOpen(false)}
                 />

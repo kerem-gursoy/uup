@@ -6,6 +6,7 @@ import { getPrisma } from "./lib/prisma.js";
 import { check } from "./controllers/system.js";
 import { login, logout, me, register } from "./controllers/auth.js";
 import { requireAuth } from "./middleware/auth.js";
+import { errorHandler } from "./middleware/errors.js";
 import {
   checkSupplierName,
   createSupplier,
@@ -57,11 +58,22 @@ app.get("/", check);
 // Auth Routes
 app.post("/auth/login", login);
 app.post("/auth/logout", logout);
-app.post("/auth/register", register);
 app.get("/auth/me", me);
 
 // Protected Routes
 app.use(requireAuth);
+
+/*
+ * Deliberately behind requireAuth. The client has no sign-up screen, so as a
+ * public route this was only ever a way for a stranger who found the URL to
+ * grant themselves full access to the shop's inventory. Behind the gate, an
+ * existing user can add a colleague.
+ *
+ * That leaves no way to create the FIRST user over HTTP, which is the point:
+ * bootstrap with `npm run user:admin -- <username> <password>`, which writes to
+ * D1 through Wrangler and is also how a forgotten password gets reset.
+ */
+app.post("/auth/register", register);
 
 app.post("/suppliers", createSupplier);
 app.get("/suppliers", listSuppliers);
@@ -91,6 +103,11 @@ app.get("/invoices", listInvoices);
 app.get("/invoices/:id", getInvoice);
 app.post("/invoices/:id/parse", parseInvoice);
 app.post("/invoices/:id/apply", applyParsedInvoice);
+
+// Last, so it sees anything the routes above throw - including multer's
+// file-size rejection, which Express would otherwise answer with an HTML stack
+// trace the client cannot read.
+app.use(errorHandler);
 
 /**
  * Everything above is mounted under /api on an outer app, so no route string in

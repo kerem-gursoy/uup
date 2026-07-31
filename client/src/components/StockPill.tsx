@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { useT } from '../i18n';
 
 /** Local to the pill's colour choice; the server owns the real definition. */
 const LOW_STOCK_THRESHOLD = 5;
@@ -14,6 +15,8 @@ export default function StockPill({
     quantity: number;
     size?: 'sm' | 'md';
 }) {
+    const t = useT();
+
     const tone =
         quantity <= 0
             ? 'bg-red-100 text-red-900'
@@ -21,7 +24,7 @@ export default function StockPill({
               ? 'bg-amber-100 text-amber-900'
               : 'bg-emerald-100 text-emerald-900';
 
-    const label = quantity <= 0 ? 'None left' : `${quantity} left`;
+    const label = quantity <= 0 ? t('stock.none') : t('stock.left', { count: quantity });
 
     return (
         <span

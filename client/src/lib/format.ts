@@ -1,36 +1,100 @@
 /**
- * Money and date formatting, in one place so every screen reads the same.
+ * Money, numbers and dates, in one place so every screen reads the same.
  *
  * Change VITE_CURRENCY in the client env to switch currency; nothing else in
  * the app hardcodes a symbol.
  */
+import { getLocaleTag } from '../i18n/locale';
+import { t } from '../i18n';
+
 const CURRENCY = import.meta.env.VITE_CURRENCY || 'TRY';
 
 /**
- * The locale is pinned rather than taken from the browser so that every member
- * of staff sees prices written the same way, whatever device they are on.
+ * How numbers and dates are written follows the interface language: "₺1.234,56"
+ * and "3 Haz 2026" in Turkish, "₺1,234.56" and "3 Jun 2026" in English. The
+ * currency itself never follows it - the shop is in Türkiye and trades in lira
+ * whoever happens to be reading the screen.
+ *
+ * The locale is still not taken from the device: it comes from the language the
+ * user chose, so two people standing at the same counter with differently
+ * configured phones see prices written the same way. Set VITE_LOCALE to pin both
+ * languages to a single way of writing numbers.
  */
-const LOCALE = import.meta.env.VITE_LOCALE || 'tr-TR';
+const LOCALE_OVERRIDE = import.meta.env.VITE_LOCALE;
 
-const moneyFormatter = new Intl.NumberFormat(LOCALE, {
+function locale(): string {
+    return LOCALE_OVERRIDE || getLocaleTag();
+}
+
+/**
+ * Intl formatters are expensive to build, so one is kept per language. Reading the
+ * locale on each call rather than once at module load is what lets the language
+ * change without a reload - every export below stays a function for that reason.
+ */
+function perLocale<T>(create: (tag: string) => T): () => T {
+    const cache = new Map<string, T>();
+
+    return () => {
+        const tag = locale();
+        let formatter = cache.get(tag);
+        if (!formatter) {
+            formatter = create(tag);
+            cache.set(tag, formatter);
+        }
+        return formatter;
+    };
+}
+
+/**
+ * narrowSymbol, not the default, because the default only writes "₺" for a locale
+ * whose own currency it is: en-GB renders lira as "TRY 1,234.56". That is correct
+ * but wrong for this shop - the price tags say ₺ - and it would also put the
+ * three-letter code inside the money input, which is sized for a symbol.
+ */
+const MONEY: Intl.NumberFormatOptions = {
     style: 'currency',
     currency: CURRENCY,
-});
+    currencyDisplay: 'narrowSymbol',
+};
+
+const moneyFormatter = perLocale((tag) => new Intl.NumberFormat(tag, MONEY));
+
+const moneyFormatterShort = perLocale(
+    (tag) => new Intl.NumberFormat(tag, { ...MONEY, maximumFractionDigits: 0 })
+);
+
+const dateFormatter = perLocale(
+    (tag) =>
+        new Intl.DateTimeFormat(tag, { day: 'numeric', month: 'short', year: 'numeric' })
+);
+
+const dateTimeFormatter = perLocale(
+    (tag) =>
+        new Intl.DateTimeFormat(tag, {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        })
+);
+
+const percentFormatter = perLocale(
+    (tag) => new Intl.NumberFormat(tag, { style: 'percent', maximumFractionDigits: 0 })
+);
+
+const oneDecimalFormatter = perLocale(
+    (tag) => new Intl.NumberFormat(tag, { maximumFractionDigits: 1 })
+);
 
 /** Money is stored and sent as whole cents so rounding can never drift. */
 export function formatMoney(cents: number): string {
-    return moneyFormatter.format(cents / 100);
+    return moneyFormatter().format(cents / 100);
 }
-
-const moneyFormatterShort = new Intl.NumberFormat(LOCALE, {
-    style: 'currency',
-    currency: CURRENCY,
-    maximumFractionDigits: 0,
-});
 
 /** Whole-currency form, for axis ticks where decimals are noise. */
 export function formatMoneyShort(cents: number): string {
-    return moneyFormatterShort.format(cents / 100);
+    return moneyFormatterShort().format(cents / 100);
 }
 
 /** For values a shop may simply not know yet - shown as a dash, never as 0. */
@@ -39,15 +103,15 @@ export function formatMoneyOrBlank(cents: number | null | undefined): string {
 }
 
 export function currencySymbol(): string {
-    const parts = moneyFormatter.formatToParts(0);
+    const parts = moneyFormatter().formatToParts(0);
     return parts.find((part) => part.type === 'currency')?.value ?? '';
 }
 
 function decimalSeparator(): string {
-    return moneyFormatter.formatToParts(0).find((part) => part.type === 'decimal')?.value ?? '.';
+    return moneyFormatter().formatToParts(0).find((part) => part.type === 'decimal')?.value ?? '.';
 }
 
-/** "0,00" or "0.00", matching however the configured locale writes decimals. */
+/** "0,00" or "0.00", matching however the current language writes decimals. */
 export function decimalPlaceholder(): string {
     return `0${decimalSeparator()}00`;
 }
@@ -68,6 +132,9 @@ export function centsToInputValue(cents: number): string {
  * "12,50", "1.234,56" and "1,234.56" all mean what they look like. The last
  * separator followed by one or two digits is the decimal point; every other
  * separator is thousands grouping.
+ *
+ * Deliberately independent of the interface language: someone who switches to
+ * English mid-shift should not find that what they type means something else.
  *
  * Returns null for anything that is not a usable amount, so callers can show a
  * message instead of silently saving a wrong number.
@@ -102,6 +169,16 @@ export function parseMoneyToCents(input: string): number | null {
 }
 
 /**
+ * A share, from a number already expressed as a percentage: pass 42 for 42%.
+ *
+ * Worth going through Intl rather than adding a "%" by hand, because Turkish puts
+ * the sign in front of the number - "%42", not "42%".
+ */
+export function formatPercent(percent: number): string {
+    return percentFormatter().format(percent / 100);
+}
+
+/**
  * Dates are spelled out ("3 Jun 2026") rather than numeric, because 03/06/2026
  * means two different days depending on who is reading it.
  */
@@ -109,11 +186,15 @@ export function formatDate(value: string | Date): string {
     const date = typeof value === 'string' ? new Date(value) : value;
     if (Number.isNaN(date.getTime())) return '';
 
-    return date.toLocaleDateString(LOCALE, {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-    });
+    return dateFormatter().format(date);
+}
+
+/** Date and time together, for stamps where the hour is part of the fact. */
+export function formatDateTime(value: string | Date): string {
+    const date = typeof value === 'string' ? new Date(value) : value;
+    if (Number.isNaN(date.getTime())) return '';
+
+    return dateTimeFormatter().format(date);
 }
 
 /** "Today" and "Yesterday" read faster than a date when that is what it is. */
@@ -128,9 +209,26 @@ export function formatDateRelative(value: string | Date): string {
         (startOfDay(new Date()) - startOfDay(date)) / 86_400_000
     );
 
-    if (dayDifference === 0) return 'Today';
-    if (dayDifference === 1) return 'Yesterday';
+    if (dayDifference === 0) return t('date.today');
+    if (dayDifference === 1) return t('date.yesterday');
     return formatDate(date);
+}
+
+/** File sizes as shown beside a chosen upload - "1.234,5 KB" in Turkish. */
+export function formatFileSize(bytes: number): string {
+    return `${oneDecimalFormatter().format(bytes / 1024)} KB`;
+}
+
+/**
+ * Sorts names the way a Turkish reader expects: ç after c, ğ after g, ı before i,
+ * ö after o, ş after s, ü after u. A default collator gets all six wrong.
+ *
+ * Pinned to Turkish rather than following the interface language, because the names
+ * being sorted are the shop's own products and suppliers - they are Turkish whatever
+ * language the labels around them are in.
+ */
+export function compareNames(a: string, b: string): number {
+    return a.localeCompare(b, 'tr', { sensitivity: 'base', numeric: true });
 }
 
 /** Today as yyyy-mm-dd in local time, for prefilling <input type="date">. */

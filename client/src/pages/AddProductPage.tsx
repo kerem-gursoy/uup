@@ -13,13 +13,18 @@ import {
 import BarcodeScanner from '../components/BarcodeScanner';
 import SupplierDialog from '../components/SupplierDialog';
 import {
+    centsToInputValue,
+    compareNames,
     dateInputToISO,
     formatMoney,
+    formatPercent,
     parseMoneyToCents,
     profitFrom,
     todayAsInputValue,
 } from '../lib/format';
 import { Button, Field, MoneyInput, QuantityInput, Section, Select, TextInput } from '../components/ui';
+import { useT } from '../i18n';
+import { T } from '../i18n/T';
 
 /**
  * Adding the first products is the hardest part of moving a shop off paper, so
@@ -27,6 +32,7 @@ import { Button, Field, MoneyInput, QuantityInput, Section, Select, TextInput } 
  * numbers a shop may not know yet can all be left blank and filled in later.
  */
 export default function AddProductPage() {
+    const t = useT();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
 
@@ -85,22 +91,24 @@ export default function AddProductPage() {
         const found: Record<string, string> = {};
 
         if (!name.trim()) {
-            found.name = 'Please give the product a name.';
+            found.name = t('product.error.nameRequired');
         }
         if (barcodeOwner) {
-            found.barcode = `${barcodeOwner.name} already uses this barcode. Clear it, or open that product instead.`;
+            found.barcode = t('product.error.barcodeTaken', { name: barcodeOwner.name });
         }
+        // The worked example is written the way this language writes money, so it
+        // is not quietly telling a Turkish reader to type a full stop.
         if (cost.trim() && costCents === null) {
-            found.cost = 'Enter an amount, for example 12,50.';
+            found.cost = t('product.error.amount', { example: centsToInputValue(1250) });
         }
         if (sell.trim() && sellCents === null) {
-            found.sell = 'Enter an amount, for example 19,99.';
+            found.sell = t('product.error.amount', { example: centsToInputValue(1999) });
         }
         if (quantity.trim() && !Number.isInteger(Number(quantity))) {
-            found.quantity = 'Enter a whole number.';
+            found.quantity = t('product.error.wholeNumber');
         }
         if (Number(quantity) < 0) {
-            found.quantity = 'Quantity cannot be less than zero.';
+            found.quantity = t('product.error.negativeQuantity');
         }
 
         setErrors(found);
@@ -124,10 +132,10 @@ export default function AddProductPage() {
                 effectiveFrom: dateInputToISO(priceDate),
             });
 
-            toast.success(`${product.name} added`);
+            toast.success(t('product.add.added', { name: product.name }));
             navigate(`/products/${product.id}`, { replace: true });
         } catch (err) {
-            toast.error(errorMessage(err, 'Could not add the product. Please try again.'));
+            toast.error(errorMessage(err, t('error.productAdd')));
         } finally {
             setSaving(false);
         }
@@ -142,31 +150,29 @@ export default function AddProductPage() {
                     className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900 mb-4 min-h-[44px]"
                 >
                     <ArrowLeft size={20} />
-                    Back
+                    {t('common.back')}
                 </button>
-                <h1 className="text-2xl font-bold text-slate-900">Add a product</h1>
-                <p className="text-slate-500 mt-1">
-                    Only the name is needed. Anything you do not know yet can be added later.
-                </p>
+                <h1 className="text-2xl font-bold text-slate-900">{t('product.add.title')}</h1>
+                <p className="text-slate-500 mt-1">{t('product.add.subtitle')}</p>
             </div>
 
-            <Section title="What is it?">
-                <Field label="Product name" htmlFor="name" error={errors.name}>
+            <Section title={t('product.form.whatIsIt')}>
+                <Field label={t('product.form.name')} htmlFor="name" error={errors.name}>
                     <TextInput
                         id="name"
                         value={name}
                         onChange={(event) => setName(event.target.value)}
-                        placeholder="For example: 1kg white sugar"
+                        placeholder={t('product.form.namePlaceholder')}
                         invalid={Boolean(errors.name)}
                         autoFocus
                     />
                 </Field>
 
                 <Field
-                    label="Barcode"
+                    label={t('product.form.barcode')}
                     htmlFor="barcode"
                     optional
-                    hint="Add it and you can find this product later by scanning it."
+                    hint={t('product.form.barcodeHint')}
                     error={errors.barcode}
                 >
                     <div className="flex gap-3">
@@ -177,7 +183,7 @@ export default function AddProductPage() {
                                 setBarcode(event.target.value);
                                 setBarcodeOwner(null);
                             }}
-                            placeholder="Type or scan the number"
+                            placeholder={t('product.form.barcodePlaceholder')}
                             inputMode="numeric"
                             invalid={Boolean(errors.barcode)}
                         />
@@ -188,7 +194,7 @@ export default function AddProductPage() {
                             icon={<ScanLine size={20} />}
                             className="shrink-0 px-4"
                         >
-                            Scan
+                            {t('product.form.scan')}
                         </Button>
                     </div>
                 </Field>
@@ -198,19 +204,22 @@ export default function AddProductPage() {
                 {barcodeOwner && (
                     <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
                         <p className="text-amber-900">
-                            <strong>{barcodeOwner.name}</strong> already uses this barcode.
+                            <T
+                                k="product.error.barcodeTaken"
+                                values={{ name: <strong>{barcodeOwner.name}</strong> }}
+                            />
                         </p>
                         <button
                             type="button"
                             onClick={() => navigate(`/products/${barcodeOwner.id}`)}
                             className="mt-2 font-semibold text-amber-900 underline min-h-[44px]"
                         >
-                            Open that product instead
+                            {t('product.form.openInstead')}
                         </button>
                     </div>
                 )}
 
-                <Field label="Brand" htmlFor="brand" optional>
+                <Field label={t('product.form.brand')} htmlFor="brand" optional>
                     <TextInput
                         id="brand"
                         value={brand}
@@ -218,19 +227,26 @@ export default function AddProductPage() {
                     />
                 </Field>
 
-                <Field label="Supplier" htmlFor="supplier" optional hint="Who you buy it from.">
+                <Field
+                    label={t('product.form.supplier')}
+                    htmlFor="supplier"
+                    optional
+                    hint={t('product.form.supplierHint')}
+                >
                     <div className="flex gap-3">
                         <Select
                             id="supplier"
                             value={supplierId}
                             onChange={(event) => setSupplierId(event.target.value)}
                         >
-                            <option value="">Not set</option>
-                            {suppliers.map((supplier) => (
-                                <option key={supplier.id} value={supplier.id}>
-                                    {supplier.name}
-                                </option>
-                            ))}
+                            <option value="">{t('product.form.notSet')}</option>
+                            {[...suppliers]
+                                .sort((a, b) => compareNames(a.name, b.name))
+                                .map((supplier) => (
+                                    <option key={supplier.id} value={supplier.id}>
+                                        {supplier.name}
+                                    </option>
+                                ))}
                         </Select>
                         <Button
                             type="button"
@@ -239,30 +255,34 @@ export default function AddProductPage() {
                             icon={<Plus size={20} />}
                             className="shrink-0 px-4"
                         >
-                            New
+                            {t('product.form.newSupplier')}
                         </Button>
                     </div>
                 </Field>
             </Section>
 
             <Section
-                title="How many do you have?"
-                hint="Count what is on the shelf right now. You can correct it any time."
+                title={t('product.form.stockSection')}
+                hint={t('product.form.stockHint')}
             >
-                <Field label="Quantity in stock" htmlFor="quantity" error={errors.quantity}>
+                <Field
+                    label={t('product.form.quantity')}
+                    htmlFor="quantity"
+                    error={errors.quantity}
+                >
                     <QuantityInput id="quantity" value={quantity} onChange={setQuantity} />
                 </Field>
             </Section>
 
             <Section
-                title="Prices"
-                hint="Leave either one blank if you do not know it yet."
+                title={t('product.form.pricesSection')}
+                hint={t('product.form.pricesHint')}
             >
                 <Field
-                    label="Cost"
+                    label={t('product.form.cost')}
                     htmlFor="cost"
                     optional
-                    hint="What you pay your supplier for one."
+                    hint={t('product.form.costHint')}
                     error={errors.cost}
                 >
                     <MoneyInput
@@ -274,10 +294,10 @@ export default function AddProductPage() {
                 </Field>
 
                 <Field
-                    label="Selling price"
+                    label={t('product.form.sell')}
                     htmlFor="sell"
                     optional
-                    hint="What your customer pays for one."
+                    hint={t('product.form.sellHint')}
                     error={errors.sell}
                 >
                     <MoneyInput
@@ -297,23 +317,32 @@ export default function AddProductPage() {
                         }`}
                     >
                         {profit.profitCents >= 0 ? (
-                            <>
-                                You make <strong>{formatMoney(profit.profitCents)}</strong> on each one
-                                {' '}({profit.marginPercent.toFixed(0)}% of the selling price).
-                            </>
+                            <T
+                                k="product.profit.positive"
+                                values={{
+                                    amount: <strong>{formatMoney(profit.profitCents)}</strong>,
+                                    margin: formatPercent(profit.marginPercent),
+                                }}
+                            />
                         ) : (
-                            <>
-                                This sells for <strong>{formatMoney(Math.abs(profit.profitCents))}</strong>
-                                {' '}less than it costs you.
-                            </>
+                            <T
+                                k="product.profit.negative"
+                                values={{
+                                    amount: (
+                                        <strong>
+                                            {formatMoney(Math.abs(profit.profitCents))}
+                                        </strong>
+                                    ),
+                                }}
+                            />
                         )}
                     </div>
                 )}
 
                 <Field
-                    label="These prices are correct as of"
+                    label={t('product.form.priceDate')}
                     htmlFor="priceDate"
-                    hint="Change this if you are entering an older price from a past invoice."
+                    hint={t('product.form.priceDateHint')}
                 >
                     <TextInput
                         id="priceDate"
@@ -327,16 +356,16 @@ export default function AddProductPage() {
 
             <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                 <Button type="button" variant="secondary" onClick={() => navigate('/products')}>
-                    Cancel
+                    {t('common.cancel')}
                 </Button>
                 <Button type="submit" busy={saving} icon={<Check size={20} />}>
-                    {saving ? 'Adding…' : 'Add product'}
+                    {saving ? t('product.add.saving') : t('product.add.submit')}
                 </Button>
             </div>
 
             {scannerOpen && (
                 <BarcodeScanner
-                    title="Scan the product's barcode"
+                    title={t('product.form.scanTitle')}
                     onDetected={handleScanned}
                     onClose={() => setScannerOpen(false)}
                 />
@@ -346,16 +375,16 @@ export default function AddProductPage() {
                 <SupplierDialog
                     onSaved={(supplier) => {
                         setSuppliers((current) =>
-                            [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
+                            [...current, supplier].sort((a, b) => compareNames(a.name, b.name))
                         );
                         setSupplierId(String(supplier.id));
                         setSupplierDialogOpen(false);
-                        toast.success(`${supplier.name} added`);
+                        toast.success(t('supplier.list.added', { name: supplier.name }));
                     }}
                     onUseExisting={(supplier) => {
                         setSupplierId(String(supplier.id));
                         setSupplierDialogOpen(false);
-                        toast.info(`Using ${supplier.name}`);
+                        toast.info(t('product.form.usingSupplier', { name: supplier.name }));
                     }}
                     onClose={() => setSupplierDialogOpen(false)}
                 />

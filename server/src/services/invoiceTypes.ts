@@ -27,6 +27,13 @@ export type ParsedInvoiceLine = {
   matchedProductName: string | null;
   matchedBrand: string | null;
   matchScore: number;
+  /**
+   * True when quantity × unitPrice does not agree with the row total printed on
+   * the invoice. Almost always a misread decimal separator - Turkish invoices
+   * write "1.234,56" - and it is worth catching here, because applying the line
+   * writes the price into cost history where nothing would flag it later.
+   */
+  priceMismatch: boolean;
 };
 
 export type ParsedInvoiceResponse = {

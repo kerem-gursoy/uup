@@ -26,22 +26,47 @@ const toNullableString = (value: unknown): string | null => {
   return trimmed.length ? trimmed : null;
 };
 
+/** How far quantity × unit price may drift from the printed row total before it
+ *  is worth asking a human. Wide enough to absorb the invoice's own rounding. */
+const TOTAL_TOLERANCE = 0.02;
+
+/**
+ * Does the row add up? Only answerable when all three figures were read, and
+ * deliberately silent when the total is zero - a zero row is a free item or a
+ * heading, not a misread price.
+ */
+const disagreesWithTotal = (
+  quantity: number | null,
+  unitPrice: number | null,
+  totalPrice: number | null
+): boolean => {
+  if (quantity === null || unitPrice === null || totalPrice === null) return false;
+  if (totalPrice === 0) return false;
+
+  return Math.abs(quantity * unitPrice - totalPrice) / Math.abs(totalPrice) > TOTAL_TOLERANCE;
+};
+
 const normalizeLineItem = (line: RawGeminiInvoice["line_items"][number]): ParsedInvoiceLine => {
   const description = typeof line.description === "string" ? line.description.trim() : "";
+
+  const quantity = toNullableNumber(line.quantity);
+  const unitPrice = toNullableNumber(line.unit_price);
+  const totalPrice = toNullableNumber(line.total_price);
 
   return {
     lineNo: toNullableNumber(line.line_no),
     code: toNullableString(line.code),
     description,
     barcode: toNullableString(line.barcode),
-    quantity: toNullableNumber(line.quantity),
+    quantity,
     unit: toNullableString(line.unit),
-    unitPrice: toNullableNumber(line.unit_price),
-    totalPrice: toNullableNumber(line.total_price),
+    unitPrice,
+    totalPrice,
     matchedProductId: null,
     matchedProductName: null,
     matchedBrand: null,
     matchScore: 0,
+    priceMismatch: disagreesWithTotal(quantity, unitPrice, totalPrice),
   };
 };
 

@@ -10,6 +10,8 @@ import {
 } from '../services/api';
 import { useDebounce } from '../hooks/useDebounce';
 import { Button, Field, Modal, TextInput } from './ui';
+import { useT, useTPlural } from '../i18n';
+import { T } from '../i18n/T';
 
 /**
  * Adds a supplier, or renames one, with two safeguards against ending up with
@@ -41,6 +43,7 @@ export default function SupplierDialog({
     onUseExisting?: (supplier: Supplier) => void;
     onClose: () => void;
 }) {
+    const t = useT();
     const renaming = existing !== undefined;
 
     const [name, setName] = useState(existing?.name ?? '');
@@ -114,7 +117,7 @@ export default function SupplierDialog({
                 onUseExisting(clash);
                 return;
             }
-            setSaveError(errorMessage(err, 'Could not save the supplier.'));
+            setSaveError(errorMessage(err, t('error.supplierSave')));
             setStep('enter');
         } finally {
             setSaving(false);
@@ -123,11 +126,20 @@ export default function SupplierDialog({
 
     if (step === 'confirm') {
         return (
-            <Modal title={renaming ? 'Rename this supplier?' : 'Add this supplier?'} onClose={onClose}>
+            <Modal
+                title={
+                    renaming
+                        ? t('supplier.dialog.confirmRename')
+                        : t('supplier.dialog.confirmAdd')
+                }
+                onClose={onClose}
+            >
                 <div className="space-y-5">
                     {renaming && (
                         <div>
-                            <p className="text-slate-600">Currently called</p>
+                            <p className="text-slate-600">
+                                {t('supplier.dialog.currentlyCalled')}
+                            </p>
                             <p className="text-lg text-slate-500 line-through break-words mt-0.5">
                                 {existing.name}
                             </p>
@@ -136,7 +148,9 @@ export default function SupplierDialog({
 
                     <div>
                         <p className="text-slate-600">
-                            {renaming ? 'Will be renamed to' : 'This will be saved as'}
+                            {renaming
+                                ? t('supplier.dialog.willBeRenamed')
+                                : t('supplier.dialog.willBeSaved')}
                         </p>
                         <p className="text-xl font-semibold text-slate-900 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mt-1.5 break-words">
                             {finalName}
@@ -149,8 +163,8 @@ export default function SupplierDialog({
 
                     <p className="text-slate-600">
                         {renaming
-                            ? 'Products already pointing at this supplier keep pointing at it.'
-                            : 'You will be able to choose this supplier for any product.'}
+                            ? t('supplier.dialog.renameNote')
+                            : t('supplier.dialog.addNote')}
                     </p>
 
                     <div className="space-y-3">
@@ -160,7 +174,11 @@ export default function SupplierDialog({
                             icon={<Check size={20} />}
                             className="w-full"
                         >
-                            {saving ? 'Saving…' : renaming ? 'Yes, rename it' : 'Yes, add supplier'}
+                            {saving
+                                ? t('supplier.dialog.saving')
+                                : renaming
+                                  ? t('supplier.dialog.yesRename')
+                                  : t('supplier.dialog.yesAdd')}
                         </Button>
                         <Button
                             variant="secondary"
@@ -169,7 +187,7 @@ export default function SupplierDialog({
                             className="w-full"
                             disabled={saving}
                         >
-                            Go back and edit
+                            {t('supplier.dialog.goBack')}
                         </Button>
                     </div>
                 </div>
@@ -178,7 +196,12 @@ export default function SupplierDialog({
     }
 
     return (
-        <Modal title={renaming ? 'Rename supplier' : 'New supplier'} onClose={onClose}>
+        <Modal
+            title={
+                renaming ? t('supplier.dialog.renameTitle') : t('supplier.dialog.newTitle')
+            }
+            onClose={onClose}
+        >
             <form
                 onSubmit={(event) => {
                     event.preventDefault();
@@ -192,9 +215,9 @@ export default function SupplierDialog({
                 className="space-y-5"
             >
                 <Field
-                    label="Supplier name"
+                    label={t('supplier.dialog.nameLabel')}
                     htmlFor="supplierName"
-                    hint="The business you buy from."
+                    hint={t('supplier.dialog.nameHint')}
                     error={saveError ?? (upToDate && !check.valid ? check.error : undefined)}
                 >
                     <TextInput
@@ -204,7 +227,7 @@ export default function SupplierDialog({
                             setName(event.target.value);
                             setSaveError(null);
                         }}
-                        placeholder="For example: Yildiz Ambalaj"
+                        placeholder={t('supplier.dialog.namePlaceholder')}
                         autoFocus
                         autoCapitalize="words"
                         maxLength={120}
@@ -218,15 +241,21 @@ export default function SupplierDialog({
                     {checking && trimmed && (
                         <p className="text-sm text-slate-500 flex items-center gap-2">
                             <Loader2 size={15} className="animate-spin" />
-                            Checking your list…
+                            {t('supplier.dialog.checking')}
                         </p>
                     )}
 
                     {exact && (
                         <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
+                            {/* Two keys, not one: the second sentence stands on its
+                                own, and gluing it to the first would force the
+                                Turkish to keep the English sentence boundary. */}
                             <p className="text-blue-900">
-                                <strong>{exact.name}</strong> is already in your list. Capital
-                                letters do not make a different supplier.
+                                <T
+                                    k="supplier.dialog.taken"
+                                    values={{ name: <strong>{exact.name}</strong> }}
+                                />{' '}
+                                {t('supplier.dialog.takenNote')}
                             </p>
                             {onUseExisting && (
                                 <Button
@@ -235,7 +264,7 @@ export default function SupplierDialog({
                                     icon={<CornerDownLeft size={18} />}
                                     className="w-full mt-3"
                                 >
-                                    Use {exact.name}
+                                    {t('supplier.dialog.use', { name: exact.name })}
                                 </Button>
                             )}
                         </div>
@@ -252,10 +281,10 @@ export default function SupplierDialog({
                         disabled={!trimmed || Boolean(exact) || checking || unchanged}
                         className="w-full"
                     >
-                        {unchanged ? 'No change yet' : 'Continue'}
+                        {unchanged ? t('supplier.dialog.noChange') : t('common.continue')}
                     </Button>
                     <Button variant="ghost" onClick={onClose} className="w-full">
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                 </div>
             </form>
@@ -274,15 +303,14 @@ function SimilarWarning({
     similar: Supplier[];
     onUseExisting?: (supplier: Supplier) => void;
 }) {
+    const t = useT();
+    const tPlural = useTPlural();
+
     return (
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
             <p className="text-amber-900 flex items-start gap-2">
                 <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-                <span>
-                    {similar.length === 1
-                        ? 'You already have a supplier with an almost identical name. Is it the same one?'
-                        : 'You already have suppliers with almost identical names. Is it one of these?'}
-                </span>
+                <span>{tPlural('supplier.dialog.similar', similar.length)}</span>
             </p>
             {onUseExisting && (
                 <div className="mt-3 space-y-2">
@@ -294,7 +322,7 @@ function SimilarWarning({
                             onClick={() => onUseExisting(supplier)}
                             className="w-full"
                         >
-                            Use {supplier.name}
+                            {t('supplier.dialog.use', { name: supplier.name })}
                         </Button>
                     ))}
                 </div>

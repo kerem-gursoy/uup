@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { PriceHistoryEntry } from '../services/api';
 import { formatDate, formatMoney, formatMoneyShort } from '../lib/format';
+import { useT } from '../i18n';
 
 /**
  * Cost and selling price over time.
@@ -19,9 +20,11 @@ import { formatDate, formatMoney, formatMoneyShort } from '../lib/format';
  * identity, not good or bad.
  */
 
+/** Only the colours are fixed here; the labels are copy and come from the
+ *  dictionary at render time. */
 const SERIES = {
-    sell: { key: 'sell', label: 'Selling price', color: '#2563eb' },
-    cost: { key: 'cost', label: 'Cost', color: '#eb6834' },
+    sell: { key: 'sell', color: '#2563eb' },
+    cost: { key: 'cost', color: '#eb6834' },
 } as const;
 
 /**
@@ -67,6 +70,7 @@ const toPoints = (entries: PriceHistoryEntry[]): Point[] =>
         .sort((a, b) => a.time - b.time);
 
 export default function PriceChart({ history }: { history: PriceHistoryEntry[] }) {
+    const t = useT();
     const [hoverTime, setHoverTime] = useState<number | null>(null);
     const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -82,8 +86,12 @@ export default function PriceChart({ history }: { history: PriceHistoryEntry[] }
         // Selling price first, so it takes categorical slot 1 and stays the
         // series a reader looks at first.
         const candidates: Array<Track | null> = [
-            sell.length ? { label: SERIES.sell.label, color: SERIES.sell.color, points: sell } : null,
-            cost.length ? { label: SERIES.cost.label, color: SERIES.cost.color, points: cost } : null,
+            sell.length
+                ? { label: t('chart.sellingPrice'), color: SERIES.sell.color, points: sell }
+                : null,
+            cost.length
+                ? { label: t('chart.cost'), color: SERIES.cost.color, points: cost }
+                : null,
         ];
         const tracks = candidates.filter((track): track is Track => track !== null);
 
@@ -119,7 +127,7 @@ export default function PriceChart({ history }: { history: PriceHistoryEntry[] }
             ((cents - minValue) / Math.max(1, maxValue - minValue)) * PLOT_HEIGHT;
 
         return { tracks, minTime, minValue, maxValue, x, y };
-    }, [history, now]);
+    }, [history, now, t]);
 
     if (!model) return null;
 
@@ -186,7 +194,11 @@ export default function PriceChart({ history }: { history: PriceHistoryEntry[] }
                     viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
                     className="w-full h-auto touch-none"
                     role="img"
-                    aria-label={`${tracks.map((t) => t.label).join(' and ')} over time. The full figures are listed below the chart.`}
+                    aria-label={t('chart.ariaLabel', {
+                        series: tracks
+                            .map((track) => track.label)
+                            .join(` ${t('common.and')} `),
+                    })}
                     onPointerMove={handlePointer}
                     onPointerDown={handlePointer}
                     onPointerLeave={() => setHoverTime(null)}
@@ -228,7 +240,7 @@ export default function PriceChart({ history }: { history: PriceHistoryEntry[] }
                         className="fill-slate-500"
                         style={{ fontSize: LABEL_SIZE }}
                     >
-                        Today
+                        {t('date.today')}
                     </text>
 
                     {hoverX !== null && (
@@ -337,7 +349,7 @@ export default function PriceChart({ history }: { history: PriceHistoryEntry[] }
             </div>
 
             <figcaption className="text-sm text-slate-500 mt-1">
-                A price holds until you change it, so the line steps rather than slopes.
+                {t('chart.caption')}
             </figcaption>
         </figure>
     );

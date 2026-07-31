@@ -17,6 +17,7 @@ import {
     Modal,
 } from '../components/ui';
 import SupplierDialog from '../components/SupplierDialog';
+import { useT, useTPlural, type t as translate, type tPlural as translatePlural } from '../i18n';
 
 /**
  * Manage the list of businesses the shop buys from.
@@ -27,6 +28,8 @@ import SupplierDialog from '../components/SupplierDialog';
  * offering a delete that fails, the button is disabled and the row explains why.
  */
 export default function SuppliersPage() {
+    const t = useT();
+    const tPlural = useTPlural();
     const navigate = useNavigate();
 
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -43,11 +46,11 @@ export default function SuppliersPage() {
         try {
             setSuppliers(await getSuppliers());
         } catch (err) {
-            setError(errorMessage(err, 'Could not load your suppliers.'));
+            setError(errorMessage(err, t('error.suppliersListLoad')));
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [t]);
 
     useEffect(() => {
         load();
@@ -62,25 +65,27 @@ export default function SuppliersPage() {
                     className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900 mb-4 min-h-[44px]"
                 >
                     <ArrowLeft size={20} />
-                    Back
+                    {t('common.back')}
                 </button>
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-slate-900">Suppliers</h1>
+                        <h1 className="text-2xl font-bold text-slate-900">
+                            {t('supplier.list.title')}
+                        </h1>
                         <p className="text-slate-500 text-sm mt-0.5">
                             {loading
-                                ? 'Loading…'
-                                : `${suppliers.length} ${suppliers.length === 1 ? 'supplier' : 'suppliers'}`}
+                                ? t('common.loading')
+                                : tPlural('count.supplier', suppliers.length)}
                         </p>
                     </div>
                     <Button onClick={() => setAddOpen(true)} icon={<Plus size={20} />}>
-                        Add
+                        {t('supplier.list.add')}
                     </Button>
                 </div>
             </div>
 
             {loading ? (
-                <LoadingBlock label="Loading suppliers…" />
+                <LoadingBlock label={t('supplier.list.loading')} />
             ) : error ? (
                 <Card>
                     <ErrorBlock message={error} onRetry={load} />
@@ -89,11 +94,11 @@ export default function SuppliersPage() {
                 <Card>
                     <EmptyBlock
                         icon={<Building2 size={26} />}
-                        title="No suppliers yet"
-                        description="Add the businesses you buy from, then you can pick one for each product."
+                        title={t('supplier.list.empty')}
+                        description={t('supplier.list.emptyHint')}
                         action={
                             <Button onClick={() => setAddOpen(true)} icon={<Plus size={20} />}>
-                                Add a supplier
+                                {t('supplier.list.addOne')}
                             </Button>
                         }
                     />
@@ -115,7 +120,7 @@ export default function SuppliersPage() {
                 <SupplierDialog
                     onSaved={(supplier) => {
                         setAddOpen(false);
-                        toast.success(`${supplier.name} added`);
+                        toast.success(t('supplier.list.added', { name: supplier.name }));
                         void load();
                     }}
                     onClose={() => setAddOpen(false)}
@@ -127,7 +132,7 @@ export default function SuppliersPage() {
                     existing={renaming}
                     onSaved={(supplier) => {
                         setRenaming(null);
-                        toast.success(`Renamed to ${supplier.name}`);
+                        toast.success(t('supplier.list.renamed', { name: supplier.name }));
                         void load();
                     }}
                     onClose={() => setRenaming(null)}
@@ -148,16 +153,22 @@ export default function SuppliersPage() {
     );
 }
 
-function usageLabel(supplier: Supplier): string {
+function usageLabel(
+    supplier: Supplier,
+    t: typeof translate,
+    tPlural: typeof translatePlural
+): string {
     const products = supplier.productCount ?? 0;
     const invoices = supplier.invoiceCount ?? 0;
 
     const parts = [
-        products > 0 && `${products} ${products === 1 ? 'product' : 'products'}`,
-        invoices > 0 && `${invoices} ${invoices === 1 ? 'invoice' : 'invoices'}`,
+        products > 0 && tPlural('count.product', products),
+        invoices > 0 && tPlural('count.invoice', invoices),
     ].filter(Boolean) as string[];
 
-    return parts.length ? `Used by ${parts.join(' and ')}` : 'Not used by anything yet';
+    return parts.length
+        ? t('supplier.list.usedBy', { what: parts.join(` ${t('common.and')} `) })
+        : t('supplier.list.unused');
 }
 
 function SupplierRow({
@@ -169,6 +180,8 @@ function SupplierRow({
     onRename: () => void;
     onRemove: () => void;
 }) {
+    const t = useT();
+    const tPlural = useTPlural();
     const inUse = (supplier.productCount ?? 0) > 0 || (supplier.invoiceCount ?? 0) > 0;
 
     return (
@@ -179,12 +192,14 @@ function SupplierRow({
             <Card className="p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
                 <div className="min-w-0">
                     <p className="font-semibold text-slate-900 break-words">{supplier.name}</p>
-                    <p className="text-sm text-slate-500 mt-0.5">{usageLabel(supplier)}</p>
+                    <p className="text-sm text-slate-500 mt-0.5">
+                        {usageLabel(supplier, t, tPlural)}
+                    </p>
                     {/* Says why the button is dead, instead of leaving the user to
                         tap a greyed control and guess. */}
                     {inUse && (
                         <p className="text-sm text-slate-500 mt-1">
-                            Move those to another supplier before removing it.
+                            {t('supplier.list.moveFirst')}
                         </p>
                     )}
                 </div>
@@ -194,20 +209,20 @@ function SupplierRow({
                         variant="secondary"
                         onClick={onRename}
                         icon={<Pencil size={17} />}
-                        aria-label={`Rename ${supplier.name}`}
+                        aria-label={t('supplier.list.renameAria', { name: supplier.name })}
                         className="flex-1 sm:flex-none min-h-[44px] px-3 text-sm"
                     >
-                        Rename
+                        {t('supplier.list.rename')}
                     </Button>
                     <Button
                         variant="secondary"
                         onClick={onRemove}
                         disabled={inUse}
                         icon={<Trash2 size={17} />}
-                        aria-label={`Remove ${supplier.name}`}
+                        aria-label={t('supplier.list.removeAria', { name: supplier.name })}
                         className="flex-1 sm:flex-none min-h-[44px] px-3 text-sm"
                     >
-                        Remove
+                        {t('supplier.list.remove')}
                     </Button>
                 </div>
             </Card>
@@ -224,6 +239,7 @@ function RemoveSupplierDialog({
     onDone: () => void;
     onClose: () => void;
 }) {
+    const t = useT();
     const [removing, setRemoving] = useState(false);
     const [failed, setFailed] = useState<string | null>(null);
 
@@ -232,31 +248,28 @@ function RemoveSupplierDialog({
         setFailed(null);
         try {
             await deleteSupplier(supplier.id);
-            toast.success(`${supplier.name} removed`);
+            toast.success(t('supplier.list.removed', { name: supplier.name }));
             onDone();
         } catch (err) {
             // The server re-checks usage, so this catches a product attached in
             // the moment between the list loading and the delete.
-            setFailed(errorMessage(err, 'Could not remove this supplier.'));
+            setFailed(errorMessage(err, t('error.supplierRemove')));
         } finally {
             setRemoving(false);
         }
     };
 
     return (
-        <Modal title="Remove this supplier?" onClose={onClose}>
+        <Modal title={t('supplier.remove.title')} onClose={onClose}>
             <div className="space-y-5">
                 <div>
-                    <p className="text-slate-600">You are about to remove</p>
+                    <p className="text-slate-600">{t('supplier.remove.aboutTo')}</p>
                     <p className="text-xl font-semibold text-slate-900 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mt-1.5 break-words">
                         {supplier.name}
                     </p>
                 </div>
 
-                <p className="text-slate-600">
-                    This cannot be undone. Nothing else in your records points at this supplier, so
-                    nothing else changes.
-                </p>
+                <p className="text-slate-600">{t('supplier.remove.note')}</p>
 
                 {failed && (
                     <p role="alert" className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-amber-900">
@@ -271,10 +284,10 @@ function RemoveSupplierDialog({
                         icon={<Trash2 size={20} />}
                         className="w-full !bg-red-600 hover:!bg-red-700"
                     >
-                        {removing ? 'Removing…' : 'Yes, remove it'}
+                        {removing ? t('supplier.remove.removing') : t('supplier.remove.yes')}
                     </Button>
                     <Button variant="secondary" onClick={onClose} className="w-full" disabled={removing}>
-                        Keep it
+                        {t('supplier.remove.keep')}
                     </Button>
                 </div>
             </div>

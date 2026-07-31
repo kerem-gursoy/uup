@@ -3,24 +3,44 @@ import type { AppPrisma } from "../lib/prisma.js";
 import { ApplyInvoiceRequest } from "./invoiceTypes.js";
 import { recordPrice } from "./inventory.js";
 
+/**
+ * A rejected request rather than a server fault, carrying the status the
+ * controller should answer with.
+ *
+ * The status travels with the error because the alternative - matching on
+ * message text - silently misclassified anything whose wording drifted. Two of
+ * the four validation failures below ("Quantity must be non-zero...", "Product
+ * not found...") did not begin with "Invalid", so a user who picked a
+ * since-deleted product got a blank 500 instead of a message naming the line.
+ */
+export class InvoiceApplyError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "InvoiceApplyError";
+    this.status = status;
+  }
+}
+
 const requireIntegerQuantity = (value: number | null, lineLabel: string) => {
   if (!Number.isInteger(value as number)) {
-    throw new Error(`Invalid quantity for ${lineLabel}`);
+    throw new InvoiceApplyError(`Invalid quantity for ${lineLabel}`, 400);
   }
   const intValue = value as number;
   if (intValue === 0) {
-    throw new Error(`Quantity must be non-zero for ${lineLabel}`);
+    throw new InvoiceApplyError(`Quantity must be non-zero for ${lineLabel}`, 400);
   }
   return intValue;
 };
 
 const requireUnitPriceCents = (value: number | null, lineLabel: string) => {
   if (!Number.isFinite(value as number) || (value as number) <= 0) {
-    throw new Error(`Invalid unitPrice for ${lineLabel}`);
+    throw new InvoiceApplyError(`Invalid unitPrice for ${lineLabel}`, 400);
   }
   const cents = Math.round((value as number) * 100);
   if (cents <= 0) {
-    throw new Error(`Invalid unitPrice for ${lineLabel}`);
+    throw new InvoiceApplyError(`Invalid unitPrice for ${lineLabel}`, 400);
   }
   return cents;
 };
@@ -31,19 +51,26 @@ const requireUnitPriceCents = (value: number | null, lineLabel: string) => {
  *
  * Structured in two distinct passes because D1 has no interactive transactions.
  * The old shape - `$transaction(async (tx) => ...)` with reads interleaved
- * between writes - is not supported by the D1 adapter, which offers only atomic
- * execution of a pre-built array of operations. A naive port of that shape
- * compiles and then fails at runtime, so:
+ * between writes - is not supported by the D1 adapter at all, so:
  *
  *   Pass 1  validate, using ordinary reads. Nothing is written, so reading
  *           outside a transaction is safe: the worst case is that validation
  *           races another writer, which for a single-tenant shop tool applying
  *           an invoice by hand is not a real scenario.
- *   Pass 2  build every write un-awaited, then hand the whole array to
- *           `$transaction([...])`, which D1 executes atomically.
+ *   Pass 2  build every write un-awaited and submit them together.
  *
- * The guarantee that matters is preserved: if any line is invalid, the function
- * throws during pass 1 and NOT ONE write reaches the database.
+ * Note what pass 2 does NOT buy. `@prisma/adapter-d1` logs, on every call, that
+ * it does not implement transactions and runs the array as individual queries -
+ * so the batch is a grouping, not an atomic commit, and a failure midway leaves
+ * the earlier writes in place.
+ *
+ * Pass 1 is therefore the real safeguard rather than a convenience: every
+ * condition this function rejects is checked before a single write is issued, so
+ * a bad line writes nothing. What remains uncovered is an infrastructure failure
+ * partway through pass 2, which would need the invoice to be re-checked by hand.
+ * Accepted deliberately: the alternative is compensating logic whose own failure
+ * modes are worse than the one it guards against, for a tool where one person
+ * applies one invoice at a time.
  */
 export const applyInvoice = async (
   client: AppPrisma,
@@ -54,10 +81,10 @@ export const applyInvoice = async (
   const invoice = await client.invoice.findUnique({ where: { id: invoiceId } });
 
   if (!invoice) {
-    throw new Error("Invoice not found");
+    throw new InvoiceApplyError("Invoice not found", 404);
   }
   if (invoice.status === "APPLIED") {
-    throw new Error("Invoice already applied");
+    throw new InvoiceApplyError("Invoice already applied", 409);
   }
 
   const lines = payload.lines ?? [];
@@ -84,7 +111,7 @@ export const applyInvoice = async (
     const productId = line.productId!;
 
     if (!known.has(productId)) {
-      throw new Error(`Product not found for ${label}`);
+      throw new InvoiceApplyError(`Product not found for ${label}`, 400);
     }
 
     if (line.applyStock) {

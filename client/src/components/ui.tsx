@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AlertCircle, Loader2, Minus, Plus } from 'lucide-react';
 import clsx from 'clsx';
 import { currencySymbol, decimalPlaceholder } from '../lib/format';
+import { useLocale, useT } from '../i18n';
 
 /**
  * Shared building blocks for the app's screens.
@@ -60,11 +61,17 @@ export function Field({
     htmlFor?: string;
     children: ReactNode;
 }) {
+    const t = useT();
+
     return (
         <div>
             <label htmlFor={htmlFor} className="block text-base font-medium text-slate-900 mb-1">
                 {label}
-                {optional && <span className="ml-2 text-sm font-normal text-slate-400">Optional</span>}
+                {optional && (
+                    <span className="ml-2 text-sm font-normal text-slate-400">
+                        {t('common.optional')}
+                    </span>
+                )}
             </label>
             {hint && <p className="text-sm text-slate-500 mb-2">{hint}</p>}
             {children}
@@ -119,6 +126,11 @@ export function MoneyInput({
     invalid?: boolean;
     id?: string;
 }) {
+    // This field writes money but has no copy of its own, so React cannot see that
+    // it depends on the language. Without this it would keep the old decimal
+    // separator and currency symbol after a switch.
+    useLocale();
+
     // The currency sits in its own cell rather than floating over the input, so
     // a long symbol like "TRY" can never overlap what has been typed.
     return (
@@ -159,6 +171,8 @@ export function QuantityInput({
     min?: number;
     id?: string;
 }) {
+    const t = useT();
+
     const step = (delta: number) => {
         const next = (Number(value) || 0) + delta;
         onChange(String(Math.max(min, next)));
@@ -169,7 +183,7 @@ export function QuantityInput({
             <button
                 type="button"
                 onClick={() => step(-1)}
-                aria-label="Decrease by one"
+                aria-label={t('common.decreaseByOne')}
                 className="w-14 shrink-0 rounded-xl border border-slate-300 bg-white text-slate-700 flex items-center justify-center hover:bg-slate-50 active:scale-95 transition"
             >
                 <Minus size={22} />
@@ -186,7 +200,7 @@ export function QuantityInput({
             <button
                 type="button"
                 onClick={() => step(1)}
-                aria-label="Increase by one"
+                aria-label={t('common.increaseByOne')}
                 className="w-14 shrink-0 rounded-xl border border-slate-300 bg-white text-slate-700 flex items-center justify-center hover:bg-slate-50 active:scale-95 transition"
             >
                 <Plus size={22} />
@@ -230,16 +244,22 @@ export function Button({
     );
 }
 
-export function LoadingBlock({ label = 'Loading…' }: { label?: string }) {
+export function LoadingBlock({ label }: { label?: string }) {
+    const t = useT();
+
     return (
         <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-500">
             <Loader2 size={28} className="animate-spin text-blue-600" />
-            <span className="text-base">{label}</span>
+            {/* Defaulted here rather than in the parameter list: a default value is
+                evaluated before any hook has run. */}
+            <span className="text-base">{label ?? t('common.loading')}</span>
         </div>
     );
 }
 
 export function ErrorBlock({ message, onRetry }: { message: string; onRetry?: () => void }) {
+    const t = useT();
+
     return (
         <div className="py-10 px-5 text-center">
             <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-3">
@@ -248,7 +268,7 @@ export function ErrorBlock({ message, onRetry }: { message: string; onRetry?: ()
             <p className="text-slate-900 font-medium">{message}</p>
             {onRetry && (
                 <Button variant="secondary" onClick={onRetry} className="mt-4">
-                    Try again
+                    {t('common.tryAgain')}
                 </Button>
             )}
         </div>
