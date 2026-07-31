@@ -1,35 +1,27 @@
-import fs from "fs";
-import path from "path";
-import crypto from "crypto";
 import multer from "multer";
 import { Request, Response } from "express";
-import { prisma } from "../lib/prisma";
-import { parseId } from "../utils/parseId";
-import { fileURLToPath } from "url";
-import { parseAndMatchInvoice } from "../services/invoiceParsing";
-import { applyInvoice } from "../services/invoiceApply";
-import { ApplyInvoiceRequest } from "../services/invoiceTypes";
+import { env } from "cloudflare:workers";
+import { parseId } from "../utils/parseId.js";
+import { parseAndMatchInvoice } from "../services/invoiceParsing.js";
+import { applyInvoice } from "../services/invoiceApply.js";
+import { ApplyInvoiceRequest } from "../services/invoiceTypes.js";
 
-// __filename and __dirname polyfill for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const invoicesUploadDir = path.join(__dirname, "..", "uploads", "invoices");
-fs.mkdirSync(invoicesUploadDir, { recursive: true });
-
+/**
+ * Workers has no filesystem, so the upload is buffered in memory and written
+ * straight to R2. Only the storage engine changes - the route wiring
+ * (`invoiceUpload.single("file")`) and multer's own 5MB limit are untouched,
+ * and the limit is what keeps "buffer it in memory" safe.
+ */
 export const invoiceUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => {
-      cb(null, invoicesUploadDir);
-    },
-    filename: (_req, file, cb) => {
-      const id = crypto.randomUUID();
-      const ext = path.extname(file.originalname) || "";
-      cb(null, `${id}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
 });
+
+/** Extension kept on the R2 key so objects stay recognisable when browsing the bucket. */
+const extensionOf = (filename: string) => {
+  const dot = filename.lastIndexOf(".");
+  return dot > 0 ? filename.slice(dot) : "";
+};
 
 export const uploadInvoice = async (req: Request, res: Response) => {
   try {
@@ -46,7 +38,7 @@ export const uploadInvoice = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid supplierId" });
     }
 
-    const supplier = await prisma.supplier.findUnique({
+    const supplier = await req.prisma.supplier.findUnique({
       where: { id: supplierId },
     });
 
@@ -60,13 +52,20 @@ export const uploadInvoice = async (req: Request, res: Response) => {
         .json({ error: "No file uploaded (field 'file' is required)" });
     }
 
-    const storedRelativePath = path.join("uploads", "invoices", req.file.filename);
+    // Written to R2 before the row is created, so a failed upload never leaves an
+    // Invoice record pointing at an object that does not exist.
+    const objectKey = `${crypto.randomUUID()}${extensionOf(req.file.originalname)}`;
+    await env.INVOICES_BUCKET.put(objectKey, req.file.buffer, {
+      httpMetadata: { contentType: req.file.mimetype },
+    });
 
-    const invoice = await prisma.invoice.create({
+    const invoice = await req.prisma.invoice.create({
       data: {
         supplierId,
         originalName: req.file.originalname,
-        storedPath: storedRelativePath,
+        // Same column as before; it now holds an R2 object key rather than a
+        // relative disk path. No schema change.
+        storedPath: objectKey,
         mimeType: req.file.mimetype,
       },
       include: {
@@ -96,7 +95,7 @@ export const uploadInvoice = async (req: Request, res: Response) => {
 
 export const listInvoices = async (req: Request, res: Response) => {
   try {
-    const invoices = await prisma.invoice.findMany({
+    const invoices = await req.prisma.invoice.findMany({
       orderBy: { createdAt: "desc" },
       include: { supplier: true },
     });
@@ -125,7 +124,7 @@ export const getInvoice = async (req: Request, res: Response) => {
   try {
     const id = parseId(req.params.id);
 
-    const invoice = await prisma.invoice.findUnique({
+    const invoice = await req.prisma.invoice.findUnique({
       where: { id },
       include: { supplier: true },
     });
@@ -161,7 +160,7 @@ export const parseInvoice = async (req: Request, res: Response) => {
   }
 
   try {
-    const parsed = await parseAndMatchInvoice(id);
+    const parsed = await parseAndMatchInvoice(req.prisma, id);
     return res.json(parsed);
   } catch (err) {
     console.error("Error parsing invoice:", err);
@@ -189,7 +188,7 @@ export const applyParsedInvoice = async (req: Request, res: Response) => {
   }
 
   try {
-    const summary = await applyInvoice(id, body);
+    const summary = await applyInvoice(req.prisma, id, body);
     return res.json(summary);
   } catch (err) {
     console.error("Error applying invoice:", err);

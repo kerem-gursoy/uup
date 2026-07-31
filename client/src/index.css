@@ -29,3 +29,58 @@
     @apply bg-slate-50 text-slate-900 antialiased;
   }
 }
+
+/* Keeps fixed bottom bars clear of the home indicator on notched phones. */
+@utility safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/*
+ * Floating-panel motion, in the spirit of a system pairing card: the backdrop
+ * fades while the panel rises and settles with a slight overshoot. The easing
+ * curve is what makes it read as physical rather than as a linear slide.
+ */
+@keyframes uup-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes uup-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Sweeps down the viewfinder so it is obvious the camera is live. */
+@keyframes uup-scan-sweep {
+  0%   { transform: translateY(0); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+@utility animate-backdrop-in {
+  animation: uup-backdrop-in 200ms ease-out both;
+}
+
+@utility animate-panel-in {
+  animation: uup-panel-in 340ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
+}
+
+@utility animate-scan-sweep {
+  animation: uup-scan-sweep 2.1s ease-in-out infinite;
+}
+
+/* Respect users who have asked the system to reduce motion. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-backdrop-in,
+  .animate-panel-in,
+  .animate-scan-sweep {
+    animation: none;
+  }
+}

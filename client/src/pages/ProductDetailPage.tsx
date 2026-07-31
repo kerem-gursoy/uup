@@ -1,357 +1,677 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, DollarSign, Package, History, ScanLine, X, TrendingUp, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Package, Pencil, Tag } from 'lucide-react';
 import { toast } from 'sonner';
-import { getProductSummary, getPriceHistory, setProductPrice, adjustProductStock, type ProductSummary, type PriceHistoryEntry } from '../services/api';
+import {
+    adjustProductStock,
+    errorMessage,
+    getPriceHistory,
+    getProductSummary,
+    setProductPrice,
+    type PriceHistoryEntry,
+    type PriceKind,
+    type ProductSummary,
+    type StockMovement,
+} from '../services/api';
+import {
+    centsToInputValue,
+    dateInputToISO,
+    formatDate,
+    formatDateRelative,
+    formatMoney,
+    formatMoneyOrBlank,
+    parseMoneyToCents,
+    profitFrom,
+    todayAsInputValue,
+} from '../lib/format';
+import {
+    Button,
+    Card,
+    ErrorBlock,
+    Field,
+    LoadingBlock,
+    Modal,
+    MoneyInput,
+    QuantityInput,
+    Select,
+    TextInput,
+} from '../components/ui';
+import StockPill from '../components/StockPill';
+import PriceChart from '../components/PriceChart';
 
 export default function ProductDetailPage() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const productId = Number(id);
 
     const [summary, setSummary] = useState<ProductSummary | null>(null);
-    const [priceHistory, setPriceHistory] = useState<PriceHistoryEntry[]>([]);
+    const [history, setHistory] = useState<PriceHistoryEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const [showStockModal, setShowStockModal] = useState(false);
-    const [showPriceModal, setShowPriceModal] = useState(false);
+    const [stockModalOpen, setStockModalOpen] = useState(false);
+    const [priceModalOpen, setPriceModalOpen] = useState(false);
 
-    const fetchData = async () => {
-        if (!id) return;
+    const load = useCallback(async () => {
+        if (!Number.isInteger(productId) || productId <= 0) {
+            setError('That product link is not valid.');
+            setLoading(false);
+            return;
+        }
 
+        setLoading(true);
+        setError(null);
         try {
-            setLoading(true);
-            setError(null);
-
             const [summaryData, historyData] = await Promise.all([
-                getProductSummary(Number(id)),
-                getPriceHistory(Number(id)),
+                getProductSummary(productId),
+                getPriceHistory(productId),
             ]);
-
             setSummary(summaryData);
-            setPriceHistory(historyData);
+            setHistory(historyData);
         } catch (err) {
-            console.error('Failed to fetch product data:', err);
-            setError('Failed to load product details');
+            setError(errorMessage(err, 'Could not load this product.'));
         } finally {
             setLoading(false);
         }
-    };
+    }, [productId]);
 
     useEffect(() => {
-        fetchData();
-    }, [id]);
+        load();
+    }, [load]);
 
-    const handleStockUpdate = async (newStock: number, reason: string) => {
-        if (!id || !summary) return;
-
-        try {
-            const quantity = newStock - summary.currentStock;
-            await adjustProductStock(Number(id), { quantity, reason });
-            toast.success(`Stock updated: ${newStock} (${reason})`);
-            setShowStockModal(false);
-            await fetchData(); // Refresh data
-        } catch (err) {
-            console.error('Failed to update stock:', err);
-            toast.error('Failed to update stock');
-        }
-    };
-
-    const handlePriceUpdate = async (newPriceCents: number) => {
-        if (!id) return;
-
-        try {
-            await setProductPrice(Number(id), newPriceCents);
-            toast.success(`Price updated to $${(newPriceCents / 100).toFixed(2)}`);
-            setShowPriceModal(false);
-            await fetchData(); // Refresh data
-        } catch (err) {
-            console.error('Failed to update price:', err);
-            toast.error('Failed to update price');
-        }
-    };
-
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center py-12">
-                <Loader2 size={32} className="animate-spin text-blue-600" />
-            </div>
-        );
-    }
+    if (loading) return <LoadingBlock label="Loading product…" />;
 
     if (error || !summary) {
         return (
-            <div className="text-center py-12">
-                <p className="text-red-600 mb-4">{error || 'Product not found'}</p>
-                <button
-                    onClick={() => navigate('/products')}
-                    className="text-blue-600 hover:text-blue-700"
-                >
-                    Back to Products
-                </button>
-            </div>
+            <Card>
+                <ErrorBlock message={error ?? 'Product not found.'} onRetry={load} />
+                <div className="pb-6 flex justify-center">
+                    <Button variant="ghost" onClick={() => navigate('/products')}>
+                        Back to products
+                    </Button>
+                </div>
+            </Card>
         );
     }
 
-    const { product, latestPrice, currentStock } = summary;
-    const priceDollars = latestPrice ? latestPrice.priceCents / 100 : 0;
+    const { product, latestCost, latestSell, currentStock } = summary;
+    const profit = profitFrom(latestCost?.priceCents, latestSell?.priceCents);
+    const costHistory = history.filter((entry) => entry.kind === 'COST');
+    const sellHistory = history.filter((entry) => entry.kind === 'SELL');
+    const subtitle = [product.brand, product.supplier?.name].filter(Boolean).join(' • ');
+
+    const handleStockSave = async (quantity: number, reason: string) => {
+        try {
+            const result = await adjustProductStock(productId, { quantity, reason });
+            setStockModalOpen(false);
+            toast.success(`Stock is now ${result.currentStock}`);
+            await load();
+        } catch (err) {
+            toast.error(errorMessage(err, 'Could not update the stock.'));
+        }
+    };
+
+    const handlePriceSave = async (
+        changes: Array<{ kind: PriceKind; priceCents: number }>,
+        effectiveFrom: string
+    ) => {
+        try {
+            for (const change of changes) {
+                await setProductPrice(productId, {
+                    kind: change.kind,
+                    priceCents: change.priceCents,
+                    effectiveFrom: dateInputToISO(effectiveFrom),
+                });
+            }
+            setPriceModalOpen(false);
+            toast.success(changes.length > 1 ? 'Prices saved' : 'Price saved');
+            await load();
+        } catch (err) {
+            toast.error(errorMessage(err, 'Could not save the price.'));
+        }
+    };
 
     return (
-        <div className="space-y-6 pb-20">
-            {/* Header */}
+        <div className="space-y-5 pb-8">
             <div>
                 <button
+                    type="button"
                     onClick={() => navigate(-1)}
-                    className="flex items-center text-slate-500 hover:text-slate-700 mb-4"
+                    className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900 mb-4 min-h-[44px]"
                 >
-                    <ArrowLeft size={20} className="mr-1" />
+                    <ArrowLeft size={20} />
                     Back
                 </button>
-                <div className="flex justify-between items-start">
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-900">{product.name}</h1>
-                        <div className="flex items-center gap-2 mt-1 text-slate-500 text-sm">
-                            <span>{product.brand && `${product.brand} • `}{product.supplier?.name || 'No supplier'}</span>
-                            {product.barcode && (
-                                <>
-                                    <span>•</span>
-                                    <span className="font-mono bg-slate-100 px-1 rounded">{product.barcode}</span>
-                                </>
-                            )}
-                        </div>
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <h1 className="text-2xl font-bold text-slate-900 leading-tight">{product.name}</h1>
+                        {subtitle && <p className="text-slate-500 mt-1">{subtitle}</p>}
+                        {product.barcode && (
+                            <p className="text-xs text-slate-500 font-mono bg-slate-50 border border-slate-100 inline-block px-1.5 py-0.5 rounded mt-2">
+                                {product.barcode}
+                            </p>
+                        )}
                     </div>
-                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${currentStock === 0 ? 'bg-red-100 text-red-800' :
-                            currentStock <= 5 ? 'bg-amber-100 text-amber-800' :
-                                'bg-emerald-100 text-emerald-800'
-                        }`}>
-                        {currentStock === 0 ? 'Out of Stock' : currentStock <= 5 ? 'Low Stock' : 'In Stock'}
-                    </span>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                        <StockPill quantity={currentStock} />
+                        <Button
+                            variant="secondary"
+                            onClick={() => navigate(`/products/${productId}/edit`)}
+                            icon={<Pencil size={17} />}
+                            className="min-h-[44px] px-3 text-sm"
+                        >
+                            Edit
+                        </Button>
+                    </div>
                 </div>
             </div>
 
-            {/* Stats Row */}
-            <div className="grid grid-cols-2 gap-4">
-                <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                    <div className="flex items-center gap-2 text-slate-500 mb-1">
-                        <DollarSign size={18} />
-                        <span className="text-sm font-medium">Price</span>
-                    </div>
-                    <p className="text-2xl font-bold text-slate-900">
-                        {latestPrice ? `$${priceDollars.toFixed(2)}` : 'Not set'}
+            {/* The three numbers that matter, each stamped with when it was set.
+                The two prices are buttons: a pencil and a hover lift signal that
+                the number itself is the way to change it. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {/* Stock leads on its own row; the two prices sit side by side
+                    underneath because they are read against each other. */}
+                <StatCard
+                    className="col-span-2 sm:col-span-1"
+                    label="In stock"
+                    value={String(currentStock)}
+                    caption={currentStock === 1 ? 'item' : 'items'}
+                    actionLabel="Update stock"
+                    onEdit={() => setStockModalOpen(true)}
+                />
+                <StatCard
+                    label="Costs you"
+                    value={formatMoneyOrBlank(latestCost?.priceCents)}
+                    caption={
+                        latestCost
+                            ? `since ${formatDate(latestCost.effectiveFrom)}`
+                            : 'tap to add'
+                    }
+                    actionLabel="Change cost"
+                    onEdit={() => setPriceModalOpen(true)}
+                />
+                <StatCard
+                    label="Sells for"
+                    value={formatMoneyOrBlank(latestSell?.priceCents)}
+                    caption={
+                        latestSell
+                            ? `since ${formatDate(latestSell.effectiveFrom)}`
+                            : 'tap to add'
+                    }
+                    actionLabel="Change selling price"
+                    onEdit={() => setPriceModalOpen(true)}
+                    emphasis
+                />
+            </div>
+
+            {profit && (
+                <Card
+                    className={`px-4 py-3 ${
+                        profit.profitCents >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'
+                    }`}
+                >
+                    <p className={profit.profitCents >= 0 ? 'text-emerald-900' : 'text-amber-900'}>
+                        {profit.profitCents >= 0 ? (
+                            <>
+                                You make <strong>{formatMoney(profit.profitCents)}</strong> on each one
+                                {' '}({profit.marginPercent.toFixed(0)}% of the selling price).
+                            </>
+                        ) : (
+                            <>
+                                Careful: this sells for{' '}
+                                <strong>{formatMoney(Math.abs(profit.profitCents))}</strong> less than it costs you.
+                            </>
+                        )}
                     </p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                    <div className="flex items-center gap-2 text-slate-500 mb-1">
-                        <Package size={18} />
-                        <span className="text-sm font-medium">Stock</span>
-                    </div>
-                    <p className="text-2xl font-bold text-slate-900">{currentStock}</p>
-                </div>
+                </Card>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Button onClick={() => setStockModalOpen(true)} icon={<Package size={20} />}>
+                    Update stock
+                </Button>
+                <Button variant="secondary" onClick={() => setPriceModalOpen(true)} icon={<Tag size={20} />}>
+                    Change prices
+                </Button>
             </div>
 
-            {/* Actions */}
-            <div className="grid grid-cols-2 gap-3">
-                <ActionButton
-                    icon={<Package size={20} />}
-                    label="Adjust Stock"
-                    onClick={() => setShowStockModal(true)}
-                    primary
+            {/* The shape of the two prices over time. The dated lists underneath
+                are its table view: every figure here is also readable as text. */}
+            {history.length > 0 && (
+                <Card className="p-5">
+                    <h3 className="font-semibold text-slate-900">Prices over time</h3>
+                    <p className="text-sm text-slate-500 mt-0.5 mb-3">
+                        How much this has cost you, and what you have charged.
+                    </p>
+                    <PriceChart history={history} />
+                </Card>
+            )}
+
+            {/* Both price tracks are shown in full, with a date on every entry. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <PriceHistoryCard
+                    title="Cost history"
+                    hint="What you paid your supplier, over time."
+                    entries={costHistory}
+                    emptyText="No cost recorded yet."
                 />
-                <ActionButton
-                    icon={<DollarSign size={20} />}
-                    label="Set Price"
-                    onClick={() => setShowPriceModal(true)}
-                />
-                <ActionButton
-                    icon={<History size={20} />}
-                    label="View History"
-                    onClick={() => { }} // TODO: Show history modal
-                />
-                <ActionButton
-                    icon={<ScanLine size={20} />}
-                    label="Scan Barcode"
-                    onClick={() => navigate('/scan')}
+                <PriceHistoryCard
+                    title="Selling price history"
+                    hint="What you charged your customers, over time."
+                    entries={sellHistory}
+                    emptyText="No selling price recorded yet."
                 />
             </div>
 
-            {/* Price History */}
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
-                <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                    <TrendingUp size={18} className="text-blue-500" />
-                    Price History
-                </h3>
-                {priceHistory.length > 0 ? (
-                    <div className="space-y-2">
-                        {priceHistory.slice(0, 5).map((entry) => (
-                            <div key={entry.id} className="flex justify-between items-center text-sm">
-                                <span className="text-slate-600">
-                                    {new Date(entry.effectiveFrom).toLocaleDateString()}
-                                </span>
-                                <span className="font-medium text-slate-900">
-                                    ${(entry.priceCents / 100).toFixed(2)}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <p className="text-slate-500 text-sm">No price history</p>
-                )}
-            </div>
+            <StockMovementsCard movements={summary.recentMovements} />
 
-            {/* Stock Movements */}
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
-                <h3 className="font-semibold text-slate-900 mb-4">Stock Movements</h3>
-                {product.stockMovements && product.stockMovements.length > 0 ? (
-                    <div className="space-y-4">
-                        {product.stockMovements.slice(0, 5).map((movement) => (
-                            <MovementItem
-                                key={movement.id}
-                                date={new Date(movement.createdAt).toLocaleDateString()}
-                                change={movement.quantity > 0 ? `+${movement.quantity}` : `${movement.quantity}`}
-                                reason={movement.reason}
-                            />
-                        ))}
-                    </div>
-                ) : (
-                    <p className="text-slate-500 text-sm">No stock movements</p>
-                )}
-            </div>
-
-            {/* Modals */}
-            {showStockModal && (
+            {stockModalOpen && (
                 <StockModal
                     currentStock={currentStock}
-                    onClose={() => setShowStockModal(false)}
-                    onSave={handleStockUpdate}
+                    onClose={() => setStockModalOpen(false)}
+                    onSave={handleStockSave}
                 />
             )}
-            {showPriceModal && (
+            {priceModalOpen && (
                 <PriceModal
-                    currentPrice={priceDollars}
-                    onClose={() => setShowPriceModal(false)}
-                    onSave={handlePriceUpdate}
+                    latestCostCents={latestCost?.priceCents ?? null}
+                    latestSellCents={latestSell?.priceCents ?? null}
+                    onClose={() => setPriceModalOpen(false)}
+                    onSave={handlePriceSave}
                 />
             )}
         </div>
     );
 }
 
-function ActionButton({ icon, label, onClick, primary }: { icon: React.ReactNode; label: string; onClick: () => void; primary?: boolean }) {
+/**
+ * A number plus the action that changes it.
+ *
+ * The whole card is the control rather than a separate button beside it: the
+ * pencil, the hover lift and the border shift all say "this figure is editable",
+ * which is the hint a first-time user needs to find the price screen at all.
+ */
+function StatCard({
+    label,
+    value,
+    caption,
+    emphasis,
+    className,
+    actionLabel,
+    onEdit,
+}: {
+    label: string;
+    value: string;
+    caption: string;
+    emphasis?: boolean;
+    className?: string;
+    actionLabel: string;
+    onEdit: () => void;
+}) {
     return (
         <button
-            onClick={onClick}
-            className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all active:scale-95 ${primary
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                }`}
+            type="button"
+            onClick={onEdit}
+            aria-label={actionLabel}
+            className={`group text-left bg-white rounded-2xl border border-slate-200 shadow-sm p-4 transition
+                hover:border-blue-300 hover:shadow-md focus-visible:outline-none
+                focus-visible:border-blue-500 focus-visible:ring-4 focus-visible:ring-blue-100
+                active:scale-[0.99] ${className ?? ''}`}
         >
-            <div className="mb-2">{icon}</div>
-            <span className="text-sm font-medium">{label}</span>
+            <span className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-slate-500">{label}</span>
+                <Pencil
+                    size={15}
+                    aria-hidden="true"
+                    className="shrink-0 text-slate-400 group-hover:text-blue-600 transition-colors"
+                />
+            </span>
+            <span
+                className={`block font-bold text-slate-900 tabular-nums mt-1 ${
+                    emphasis ? 'text-3xl' : 'text-2xl'
+                }`}
+            >
+                {value}
+            </span>
+            <span className="block text-xs text-slate-500 mt-1">{caption}</span>
         </button>
     );
 }
 
-function MovementItem({ date, change, reason }: { date: string; change: string; reason: string }) {
-    const isPositive = change.startsWith('+');
+/**
+ * Every price the shop has ever recorded, newest first, each with the date it
+ * took effect - that dated trail is the whole point of keeping history.
+ */
+function PriceHistoryCard({
+    title,
+    hint,
+    entries,
+    emptyText,
+}: {
+    title: string;
+    hint: string;
+    entries: PriceHistoryEntry[];
+    emptyText: string;
+}) {
     return (
-        <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-3">
-                <span className="text-slate-400 w-20">{date}</span>
-                <span className="text-slate-700">{reason}</span>
-            </div>
-            <span className={`font-medium ${isPositive ? 'text-emerald-600' : 'text-slate-600'}`}>
-                {change}
-            </span>
-        </div>
+        <Card className="p-5">
+            <h3 className="font-semibold text-slate-900">{title}</h3>
+            <p className="text-sm text-slate-500 mt-0.5 mb-3">{hint}</p>
+
+            {entries.length === 0 ? (
+                <p className="text-slate-500 text-sm py-2">{emptyText}</p>
+            ) : (
+                <ol className="divide-y divide-slate-100">
+                    {entries.map((entry, index) => (
+                        <li key={entry.id} className="flex items-baseline justify-between gap-4 py-2.5">
+                            <div className="min-w-0">
+                                <p className="text-slate-900">{formatDate(entry.effectiveFrom)}</p>
+                                {entry.note && (
+                                    <p className="text-xs text-slate-500 truncate">{entry.note}</p>
+                                )}
+                            </div>
+                            <div className="text-right shrink-0">
+                                <span className="font-semibold text-slate-900 tabular-nums">
+                                    {formatMoney(entry.priceCents)}
+                                </span>
+                                {index === 0 && (
+                                    <span className="ml-2 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+                                        Now
+                                    </span>
+                                )}
+                            </div>
+                        </li>
+                    ))}
+                </ol>
+            )}
+        </Card>
     );
 }
 
-function StockModal({ currentStock, onClose, onSave }: { currentStock: number; onClose: () => void; onSave: (val: number, reason: string) => void }) {
-    const [value, setValue] = useState(currentStock.toString());
-    const [reason, setReason] = useState('Restock');
-
+function StockMovementsCard({ movements }: { movements: StockMovement[] }) {
     return (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-xl scale-100 animate-in zoom-in-95 duration-200">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-slate-900">Adjust Stock</h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
-                        <X size={24} />
-                    </button>
-                </div>
-
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">New Quantity</label>
-                        <input
-                            type="number"
-                            value={value}
-                            onChange={(e) => setValue(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Reason</label>
-                        <select
-                            value={reason}
-                            onChange={(e) => setReason(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                        >
-                            <option>Restock</option>
-                            <option>Correction</option>
-                            <option>Damage</option>
-                            <option>Return</option>
-                            <option>Sale</option>
-                        </select>
-                    </div>
-                    <button
-                        onClick={() => onSave(parseInt(value) || 0, reason)}
-                        className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-colors"
-                    >
-                        Update Stock
-                    </button>
-                </div>
-            </div>
-        </div>
+        <Card className="p-5">
+            <h3 className="font-semibold text-slate-900 mb-3">Stock changes</h3>
+            {movements.length === 0 ? (
+                <p className="text-slate-500 text-sm">Nothing recorded yet.</p>
+            ) : (
+                <ol className="divide-y divide-slate-100">
+                    {movements.slice(0, 8).map((movement) => (
+                        <li key={movement.id} className="flex items-center justify-between gap-4 py-2.5">
+                            <div className="min-w-0">
+                                <p className="text-slate-900 truncate">{movement.reason}</p>
+                                <p className="text-xs text-slate-500">
+                                    {formatDateRelative(movement.createdAt)}
+                                </p>
+                            </div>
+                            <span
+                                className={`font-semibold tabular-nums shrink-0 ${
+                                    movement.quantity > 0 ? 'text-emerald-700' : 'text-red-700'
+                                }`}
+                            >
+                                {movement.quantity > 0 ? `+${movement.quantity}` : movement.quantity}
+                            </span>
+                        </li>
+                    ))}
+                </ol>
+            )}
+        </Card>
     );
 }
 
-function PriceModal({ currentPrice, onClose, onSave }: { currentPrice: number; onClose: () => void; onSave: (val: number) => void }) {
-    const [value, setValue] = useState(currentPrice.toString());
+const STOCK_REASONS = ['Counted the shelf', 'New delivery', 'Sold', 'Damaged', 'Returned'];
+
+/**
+ * Users think in "how many are there now", not in deltas, so the field asks for
+ * the new total and the difference is worked out here.
+ */
+function StockModal({
+    currentStock,
+    onClose,
+    onSave,
+}: {
+    currentStock: number;
+    onClose: () => void;
+    onSave: (quantity: number, reason: string) => Promise<void>;
+}) {
+    const [value, setValue] = useState(String(currentStock));
+    const [reason, setReason] = useState(STOCK_REASONS[0]);
+    const [saving, setSaving] = useState(false);
+
+    const newTotal = Number(value);
+    const difference = newTotal - currentStock;
+    const invalid = !Number.isInteger(newTotal) || newTotal < 0;
+
+    const submit = async () => {
+        if (invalid || difference === 0) return;
+        setSaving(true);
+        await onSave(difference, reason);
+        setSaving(false);
+    };
 
     return (
-        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-xl scale-100 animate-in zoom-in-95 duration-200">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-slate-900">Set Price</h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
-                        <X size={24} />
-                    </button>
-                </div>
+        <Modal title="Update stock" onClose={onClose}>
+            <div className="space-y-5">
+                <Field
+                    label="How many are there now?"
+                    htmlFor="newStock"
+                    hint={`Currently recorded: ${currentStock}`}
+                    error={invalid ? 'Enter a whole number of zero or more.' : undefined}
+                >
+                    <QuantityInput id="newStock" value={value} onChange={setValue} />
+                </Field>
 
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">New Price ($)</label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            value={value}
-                            onChange={(e) => setValue(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                    </div>
-                    <button
-                        onClick={() => {
-                            const dollars = parseFloat(value) || 0;
-                            const cents = Math.round(dollars * 100);
-                            onSave(cents);
-                        }}
-                        className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-colors"
-                    >
-                        Update Price
-                    </button>
+                {!invalid && difference !== 0 && (
+                    <p className="text-base text-slate-600">
+                        That is{' '}
+                        <strong className={difference > 0 ? 'text-emerald-700' : 'text-red-700'}>
+                            {difference > 0 ? `${difference} more` : `${Math.abs(difference)} fewer`}
+                        </strong>{' '}
+                        than before.
+                    </p>
+                )}
+
+                <Field label="Why did it change?" htmlFor="reason">
+                    <Select id="reason" value={reason} onChange={(event) => setReason(event.target.value)}>
+                        {STOCK_REASONS.map((option) => (
+                            <option key={option}>{option}</option>
+                        ))}
+                    </Select>
+                </Field>
+
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                    <Button variant="secondary" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button onClick={submit} busy={saving} disabled={invalid || difference === 0}>
+                        Save
+                    </Button>
                 </div>
             </div>
-        </div>
+        </Modal>
+    );
+}
+
+/**
+ * Markup shortcuts, spanning the range this shop actually prices in: a little
+ * over half again on cost, up to tripling it.
+ */
+const MARKUPS = [70, 100, 150, 200] as const;
+
+/**
+ * "Was X, that is Y more" under a price field. Seeing the old figure and the
+ * size of the change is what catches a slipped decimal point before it is saved.
+ */
+function PriceDelta({ previous, next }: { previous: number | null; next: number | null }) {
+    if (next === null || previous === null || next === previous) return null;
+
+    const difference = next - previous;
+    const percent = previous > 0 ? Math.abs((difference / previous) * 100) : null;
+
+    return (
+        <p className="mt-2 text-sm text-slate-600">
+            Was <span className="tabular-nums">{formatMoney(previous)}</span> —{' '}
+            <strong className={difference > 0 ? 'text-slate-900' : 'text-slate-900'}>
+                {difference > 0 ? 'up' : 'down'} {formatMoney(Math.abs(difference))}
+                {percent !== null && ` (${percent.toFixed(0)}%)`}
+            </strong>
+        </p>
+    );
+}
+
+/**
+ * Cost and selling price are edited together because they are usually reviewed
+ * together, and both share the one date the change takes effect from.
+ */
+function PriceModal({
+    latestCostCents,
+    latestSellCents,
+    onClose,
+    onSave,
+}: {
+    latestCostCents: number | null;
+    latestSellCents: number | null;
+    onClose: () => void;
+    onSave: (
+        changes: Array<{ kind: PriceKind; priceCents: number }>,
+        effectiveFrom: string
+    ) => Promise<void>;
+}) {
+    const asInput = (cents: number | null) => (cents === null ? '' : centsToInputValue(cents));
+
+    const [cost, setCost] = useState(asInput(latestCostCents));
+    const [sell, setSell] = useState(asInput(latestSellCents));
+    const [date, setDate] = useState(todayAsInputValue());
+    const [saving, setSaving] = useState(false);
+
+    const costCents = parseMoneyToCents(cost);
+    const sellCents = parseMoneyToCents(sell);
+    const costInvalid = cost.trim() !== '' && costCents === null;
+    const sellInvalid = sell.trim() !== '' && sellCents === null;
+    const profit = profitFrom(costCents, sellCents);
+
+    // Only prices the user actually changed are written, so reopening the
+    // dialog and closing it never adds a duplicate history entry.
+    const changes: Array<{ kind: PriceKind; priceCents: number }> = [];
+    if (costCents !== null && costCents !== latestCostCents) {
+        changes.push({ kind: 'COST', priceCents: costCents });
+    }
+    if (sellCents !== null && sellCents !== latestSellCents) {
+        changes.push({ kind: 'SELL', priceCents: sellCents });
+    }
+
+    const submit = async () => {
+        if (costInvalid || sellInvalid || changes.length === 0) return;
+        setSaving(true);
+        await onSave(changes, date);
+        setSaving(false);
+    };
+
+    return (
+        <Modal title="Change prices" onClose={onClose}>
+            <div className="space-y-5">
+                <Field
+                    label="Cost"
+                    htmlFor="costEdit"
+                    hint="What you pay your supplier for one."
+                    error={costInvalid ? 'Enter an amount, for example 12,50.' : undefined}
+                >
+                    <MoneyInput id="costEdit" value={cost} onChange={setCost} invalid={costInvalid} />
+                    <PriceDelta previous={latestCostCents} next={costCents} />
+                </Field>
+
+                <Field
+                    label="Selling price"
+                    htmlFor="sellEdit"
+                    hint="What your customer pays for one."
+                    error={sellInvalid ? 'Enter an amount, for example 19,99.' : undefined}
+                >
+                    <MoneyInput id="sellEdit" value={sell} onChange={setSell} invalid={sellInvalid} />
+                    <PriceDelta previous={latestSellCents} next={sellCents} />
+                </Field>
+
+                {/* Working out "cost plus a third" in your head is where pricing
+                    mistakes come from, so the common markups are one tap. */}
+                {costCents !== null && (
+                    <div>
+                        <p className="text-sm text-slate-600 mb-2">
+                            Or add a markup to the cost:
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            {MARKUPS.map((markup) => {
+                                const suggested = Math.round(costCents * (1 + markup / 100));
+                                return (
+                                    <button
+                                        key={markup}
+                                        type="button"
+                                        onClick={() => setSell(centsToInputValue(suggested))}
+                                        className="min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-blue-400 hover:text-blue-700 transition-colors"
+                                    >
+                                        +{markup}%
+                                        <span className="ml-1.5 text-slate-500 tabular-nums">
+                                            {formatMoney(suggested)}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {profit && (
+                    <div
+                        className={`rounded-xl px-4 py-3 ${
+                            profit.profitCents >= 0
+                                ? 'bg-emerald-50 text-emerald-900'
+                                : 'bg-amber-50 text-amber-900'
+                        }`}
+                    >
+                        {profit.profitCents >= 0 ? (
+                            <>
+                                You make <strong>{formatMoney(profit.profitCents)}</strong> on each one
+                                {' '}({profit.marginPercent.toFixed(0)}% of the selling price).
+                            </>
+                        ) : (
+                            <>
+                                This would sell for{' '}
+                                <strong>{formatMoney(Math.abs(profit.profitCents))}</strong> less than it costs you.
+                            </>
+                        )}
+                    </div>
+                )}
+
+                <Field
+                    label="Effective from"
+                    htmlFor="priceDateEdit"
+                    hint="Set an earlier date to record a price you have been using for a while."
+                >
+                    <TextInput
+                        id="priceDateEdit"
+                        type="date"
+                        value={date}
+                        max={todayAsInputValue()}
+                        onChange={(event) => setDate(event.target.value)}
+                    />
+                </Field>
+
+                <p className="text-sm text-slate-500">
+                    Earlier prices are kept, so you can always look back at what this used to cost.
+                </p>
+
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                    <Button variant="secondary" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button
+                        onClick={submit}
+                        busy={saving}
+                        disabled={costInvalid || sellInvalid || changes.length === 0}
+                    >
+                        Save
+                    </Button>
+                </div>
+            </div>
+        </Modal>
     );
 }

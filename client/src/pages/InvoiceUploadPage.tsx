@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UploadCloud, FileText, Check, AlertCircle, ChevronDown, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchSuppliers, uploadInvoice, type Supplier, type UploadInvoiceResponse } from '../services/api';
+import { getSuppliers, uploadInvoice, type Supplier, type UploadInvoiceResponse } from '../services/api';
 
 type Step = 'upload' | 'success';
 
@@ -22,7 +22,7 @@ export default function InvoiceUploadPage() {
     useEffect(() => {
         const loadSuppliers = async () => {
             try {
-                const data = await fetchSuppliers();
+                const data = await getSuppliers();
                 setSuppliers(data);
             } catch (error) {
                 console.error('Failed to fetch suppliers:', error);

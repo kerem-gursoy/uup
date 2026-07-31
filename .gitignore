@@ -15,6 +15,10 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+# Wrangler's local secrets file. The .env patterns above do NOT match it, and it
+# holds the real Gemini and JWT values for `wrangler dev`.
+.dev.vars
+.dev.vars.*
 
 # Logs
 logs
@@ -39,13 +43,24 @@ lerna-debug.log*
 # Build outputs
 dist
 dist-ssr
+build
 *.local
 
 # Testing
 coverage
 .nyc_output
 
+# Wrangler local state: the simulated D1 database and R2 bucket used by
+# `wrangler dev`, plus its build cache. Local scratch, never committed.
+.wrangler/
+# worker-configuration.d.ts is deliberately NOT ignored: tsconfig includes it,
+# so `npm run typecheck` would fail on a fresh clone without it. Regenerate with
+# `npm run types` after changing bindings in wrangler.jsonc.
+
 # Misc
 .cache
 .temp
 .tmp
+
+# Local review artifacts (generated HTML + screenshots, not project files)
+.lavish/

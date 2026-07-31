@@ -1,16 +1,11 @@
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
-import { prisma } from "../lib/prisma";
-import { parseInvoiceWithGemini } from "./gemini";
+import type { Prisma } from "@prisma/client";
+import { env } from "cloudflare:workers";
+import { parseInvoiceWithGemini } from "./gemini.js";
 import {
   ParsedInvoiceLine,
   ParsedInvoiceResponse,
   RawGeminiInvoice,
-} from "./invoiceTypes";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+} from "./invoiceTypes.js";
 
 const toNullableNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -51,9 +46,10 @@ const normalizeLineItem = (line: RawGeminiInvoice["line_items"][number]): Parsed
 };
 
 export const parseAndMatchInvoice = async (
+  client: Prisma.TransactionClient,
   invoiceId: number
 ): Promise<ParsedInvoiceResponse> => {
-  const invoice = await prisma.invoice.findUnique({
+  const invoice = await client.invoice.findUnique({
     where: { id: invoiceId },
     include: { supplier: true },
   });
@@ -62,8 +58,14 @@ export const parseAndMatchInvoice = async (
     throw new Error("Invoice not found");
   }
 
-  const filePath = path.join(__dirname, "..", invoice.storedPath);
-  const fileBuffer = await fs.readFile(filePath);
+  // Workers has no filesystem. `storedPath` now holds an R2 object key - same
+  // column, same shape, different backing store.
+  const object = await env.INVOICES_BUCKET.get(invoice.storedPath);
+  if (!object) {
+    throw new Error("Invoice file not found in storage");
+  }
+  // Buffer is available under nodejs_compat, so gemini.ts needs no change.
+  const fileBuffer = Buffer.from(await object.arrayBuffer());
 
   const parsedInvoice = await parseInvoiceWithGemini(
     fileBuffer,
@@ -79,7 +81,7 @@ export const parseAndMatchInvoice = async (
     lines.push(parsedLine);
   }
 
-  await prisma.invoice.update({
+  await client.invoice.update({
     where: { id: invoiceId },
     data: { status: "PARSED" },
   });

@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { RawGeminiInvoice } from "./invoiceTypes";
+import { RawGeminiInvoice } from "./invoiceTypes.js";
 
 const MODEL_NAME = "gemini-2.5-flash";
 
@@ -42,16 +42,19 @@ const toNullableNumber = (value: unknown) => {
   return null;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+
 const logGeminiError = (err: unknown) => {
-  const asAny = err as Record<string, unknown>;
-  const status = asAny?.response?.status;
-  const statusText = asAny?.response?.statusText;
-  const data = asAny?.response?.data;
+  const response = asRecord(asRecord(err).response);
+
   console.error("[Gemini] request failed", {
-    message: asAny?.message ?? String(err),
-    status,
-    statusText,
-    data,
+    message: asRecord(err).message ?? String(err),
+    status: response.status,
+    statusText: response.statusText,
+    data: response.data,
   });
 };
 

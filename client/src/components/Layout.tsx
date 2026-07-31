@@ -18,7 +18,10 @@ export default function Layout() {
                     <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
                         U
                     </div>
-                    <h1 className="text-lg font-bold text-slate-900">UUP</h1>
+                    {/* The app name is a label, not the page's heading - each page
+                        supplies its own h1, and two per document breaks the
+                        outline a screen reader navigates by. */}
+                    <span className="text-lg font-bold text-slate-900">UUP</span>
                 </div>
                 <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
                     <User size={20} />
@@ -36,7 +39,7 @@ export default function Layout() {
                     <NavItem to="/" icon={<Home size={24} />} label="Home" />
                     <NavItem to="/products" icon={<Package size={24} />} label="Products" />
                     <NavItem to="/scan" icon={<ScanLine size={24} />} label="Scan" />
-                    <NavItem to="/invoices/upload" icon={<FileText size={24} />} label="Invoices" />
+                    <NavItem to="/invoices" icon={<FileText size={24} />} label="Invoices" />
                     <NavItem to="/settings" icon={<Settings size={24} />} label="Settings" />
                 </div>
             </nav>

@@ -1,9 +1,7 @@
 import { Request, Response } from "express";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { prisma } from "../lib/prisma";
-
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-dev-key";
+import { getJwtSecret } from "../lib/jwtSecret.js";
+import { hashPassword, verifyPassword } from "../services/passwordHash.js";
 
 export const register = async (req: Request, res: Response) => {
     try {
@@ -13,24 +11,24 @@ export const register = async (req: Request, res: Response) => {
             return res.status(400).json({ error: "Username and password are required" });
         }
 
-        const existingUser = await prisma.user.findUnique({ where: { username } });
+        const existingUser = await req.prisma.user.findUnique({ where: { username } });
         if (existingUser) {
             return res.status(400).json({ error: "Username already exists" });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const user = await prisma.user.create({
+        const hashedPassword = await hashPassword(password);
+        const user = await req.prisma.user.create({
             data: { username, password: hashedPassword },
         });
 
         // Auto-login after register
-        const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
+        const token = jwt.sign({ userId: user.id, username: user.username }, getJwtSecret(), {
             expiresIn: "7d",
         });
 
         res.cookie("token", token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            secure: true,
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             sameSite: "lax",
         });
@@ -47,23 +45,23 @@ export const login = async (req: Request, res: Response) => {
         const { username, password } = req.body;
         console.log(`Login attempt for user: ${username}`);
 
-        const user = await prisma.user.findUnique({ where: { username } });
+        const user = await req.prisma.user.findUnique({ where: { username } });
         if (!user) {
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
-        const validPassword = await bcrypt.compare(password, user.password);
+        const validPassword = await verifyPassword(password, user.password);
         if (!validPassword) {
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
-        const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
+        const token = jwt.sign({ userId: user.id, username: user.username }, getJwtSecret(), {
             expiresIn: "7d",
         });
 
         res.cookie("token", token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            secure: true,
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             sameSite: "lax",
         });
@@ -87,8 +85,8 @@ export const me = async (req: Request, res: Response) => {
             return res.status(401).json({ error: "Not authenticated" });
         }
 
-        const decoded = jwt.verify(token, JWT_SECRET) as { userId: number };
-        const user = await prisma.user.findUnique({
+        const decoded = jwt.verify(token, getJwtSecret()) as { userId: number };
+        const user = await req.prisma.user.findUnique({
             where: { id: decoded.userId },
             select: { id: true, username: true },
         });

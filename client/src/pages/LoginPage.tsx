@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/auth-context';
 import { toast } from 'sonner';
+import { errorMessage, signIn } from '../services/api';
 
 export default function LoginPage() {
     const [username, setUsername] = useState('');
@@ -15,25 +16,12 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
-            const res = await fetch('http://localhost:3000/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
-                credentials: 'include',
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Authentication failed');
-            }
-
-            login(data.user);
-            toast.success('Logged in successfully');
+            login(await signIn({ username, password }));
+            toast.success('Signed in');
             navigate('/');
         } catch (error) {
             console.error('Auth error:', error);
-            toast.error(error instanceof Error ? error.message : 'Authentication failed');
+            toast.error(errorMessage(error, 'Could not sign in.'));
         } finally {
             setLoading(false);
         }

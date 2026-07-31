@@ -1,10 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
-import { Search, Trash2, Camera, X } from 'lucide-react';
-import { BrowserMultiFormatReader } from '@zxing/browser';
-import { NotFoundException } from '@zxing/library';
+import { useState, useEffect } from 'react';
+import { Search, Trash2, Camera } from 'lucide-react';
 import { toast } from 'sonner';
-import { type Product, getProducts, getProductByBarcode, createProduct } from '../services/api';
+import {
+    ApiError,
+    createProduct,
+    errorMessage,
+    getProductByBarcode,
+    getProducts,
+    type Product,
+} from '../services/api';
 import { useDebounce } from '../hooks/useDebounce.ts';
+import BarcodeScanner from './BarcodeScanner';
 
 // Extended type for internal state management
 export interface LineItemState {
@@ -41,23 +47,9 @@ export default function InvoiceLineItem({ line, index, onChange, onRemove, isMan
     const [isSearching, setIsSearching] = useState(false);
     const [showProductSearch, setShowProductSearch] = useState(false);
     const [showScanner, setShowScanner] = useState(false);
-    const [isScanning, setIsScanning] = useState(false);
-    const [scanMessage, setScanMessage] = useState<string>('');
     const [creatingProduct, setCreatingProduct] = useState(false);
 
     const debouncedSearch = useDebounce(productSearch, 300);
-    const videoRef = useRef<HTMLVideoElement | null>(null);
-    const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
-    const streamRef = useRef<MediaStream | null>(null);
-    const scanningLockRef = useRef(false);
-
-    // Initial product name display
-    useEffect(() => {
-        if (line.matchedProductName && !productSearch) {
-            // If we have a match but no search term, we could pre-fill search 
-            // but it might be better to just show the selected state.
-        }
-    }, [line.matchedProductName]);
 
     // Search products effect
     useEffect(() => {
@@ -114,85 +106,17 @@ export default function InvoiceLineItem({ line, index, onChange, onRemove, isMan
         }
     };
 
-    const stopScanning = () => {
-        setIsScanning(false);
-        scanningLockRef.current = false;
-        setScanMessage('');
-        if (codeReaderRef.current) {
-            codeReaderRef.current = null;
-        }
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach((t) => t.stop());
-            streamRef.current = null;
-        }
-    };
-
-    const closeScanner = () => {
-        stopScanning();
+    /**
+     * A scanned code fills the line's barcode, then tries to match it to a
+     * product. The camera itself is the shared BarcodeScanner's concern - this
+     * only decides what a scan means for an invoice line.
+     */
+    const handleScanned = async (code: string) => {
         setShowScanner(false);
-    };
+        onChange(index, { barcode: code });
 
-    useEffect(() => {
-        if (!showScanner) {
-            stopScanning();
-            return;
-        }
-
-        const startScan = async () => {
-            try {
-                if (!navigator.mediaDevices?.getUserMedia) {
-                    setScanMessage('Camera not supported in this browser');
-                    return;
-                }
-                setIsScanning(true);
-                setScanMessage('Requesting camera access...');
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' },
-                    audio: false,
-                });
-                streamRef.current = stream;
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
-                    await videoRef.current.play();
-                }
-                setScanMessage('Scanning...');
-
-                const reader = new BrowserMultiFormatReader();
-                codeReaderRef.current = reader;
-
-                reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
-                    if (scanningLockRef.current) return;
-                    if (result) {
-                        const text = result.getText();
-                        if (text) {
-                            scanningLockRef.current = true;
-                            onChange(index, { barcode: text });
-                            setScanMessage(`Scanned: ${text}`);
-                            void handleBarcodeLookup(text);
-                        }
-                        return;
-                    }
-                    if (err && !(err instanceof NotFoundException)) {
-                        setScanMessage(err.message || 'Scan error');
-                    }
-                });
-            } catch (err) {
-                console.error('Scan start failed', err);
-                setScanMessage('Unable to start camera');
-                stopScanning();
-            }
-        };
-
-        void startScan();
-
-        return () => {
-            stopScanning();
-        };
-    }, [showScanner, index, onChange]);
-
-    const handleBarcodeLookup = async (code: string) => {
         try {
-            const product = await getProductByBarcode(code.trim());
+            const product = await getProductByBarcode(code);
             onChange(index, {
                 productId: product.id,
                 matchedProductName: product.name,
@@ -201,13 +125,14 @@ export default function InvoiceLineItem({ line, index, onChange, onRemove, isMan
                 name: line.name || line.description || product.name,
                 matchScore: 1,
             });
-            toast.success('Barcode matched to product');
-            setTimeout(() => setShowScanner(false), 250);
+            toast.success(`Matched to ${product.name}`);
         } catch (error) {
-            console.error('No product for scanned barcode', error);
-            toast.error('No matching barcode found');
-            setScanMessage('No matching product found. Try again.');
-            scanningLockRef.current = false;
+            if (error instanceof ApiError && error.status === 404) {
+                toast.error(`No product has the barcode ${code}`);
+            } else {
+                console.error('Barcode lookup failed', error);
+                toast.error(errorMessage(error, 'Could not look up that barcode.'));
+            }
         }
     };
 
@@ -436,35 +361,12 @@ export default function InvoiceLineItem({ line, index, onChange, onRemove, isMan
             )}
 
             {showScanner && (
-                <div
-                    className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
-                    onClick={closeScanner}
-                >
-                    <div
-                        className="bg-slate-900 rounded-2xl w-full max-w-md overflow-hidden relative"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <button
-                            type="button"
-                            onClick={closeScanner}
-                            className="absolute top-3 right-3 text-white/80 hover:text-white"
-                            aria-label="Close scanner"
-                        >
-                            <X size={20} />
-                        </button>
-                        <div className="aspect-[4/3] bg-black">
-                            <video
-                                ref={videoRef}
-                                className={`w-full h-full object-cover ${isScanning ? 'opacity-100' : 'opacity-60'}`}
-                                playsInline
-                                muted
-                            />
-                        </div>
-                        <div className="p-3 text-sm text-white/80">
-                            {scanMessage || 'Point the camera at a barcode'}
-                        </div>
-                    </div>
-                </div>
+                <BarcodeScanner
+                    title="Scan to match a product"
+                    hint="Hold the barcode inside the frame"
+                    onDetected={handleScanned}
+                    onClose={() => setShowScanner(false)}
+                />
             )}
         </div>
     );

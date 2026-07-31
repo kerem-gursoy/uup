@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "uup",
+  "main": "server/src/index.ts",
+  "compatibility_date": "2026-07-29",
+
+  // Required for Express: gives us node:http (the httpServerHandler bridge),
+  // Buffer, node:crypto and process.env populated from Workers vars/secrets.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Frankfurt. Cloudflare has no "Frankfurt" selector - a Placement Hint naming
+  // a cloud region runs the Worker in the Cloudflare datacentre with the lowest
+  // latency to it, and aws:eu-central-1 IS Frankfurt.
+  //
+  // The benefit here is that compute sits beside the D1 primary (created with
+  // --location=weur), which cuts the per-query round trips Prisma makes. The
+  // cost is that requests from outside Europe route to Frankfurt first. That is
+  // the right trade for a single-site shop and the wrong one for a global app.
+  "placement": { "region": "aws:eu-central-1" },
+
+  // One Worker serves the built SPA *and* the API, so client and API are the
+  // same origin. That is what lets the auth cookie stay SameSite=Lax and lets
+  // the CORS middleware go away entirely.
+  "assets": {
+    "directory": "client/dist",
+    // Deep links like /products/8 must return index.html, not 404.
+    "not_found_handling": "single-page-application",
+    // Without this, /products would be ambiguous: it is both a client route and
+    // an API route. Assets are served first by default, so a *navigation* to an
+    // API path would return HTML. Routing /api/* to the Worker first removes the
+    // ambiguity - which is why the API is mounted under /api in index.ts.
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Created with: npx wrangler d1 create uup-db --location=weur
+  // The location is fixed at creation and can never be changed.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "uup-db",
+      "database_id": "PLACEHOLDER_RUN_WRANGLER_D1_CREATE"
+    }
+  ],
+
+  // Created with: npx wrangler r2 bucket create uup-invoices --location=weur
+  // The location hint is only honoured the first time a bucket of this name is
+  // created.
+  "r2_buckets": [
+    {
+      "binding": "INVOICES_BUCKET",
+      "bucket_name": "uup-invoices"
+    }
+  ]
+
+  // Secrets are never listed here. Set them with:
+  //   npx wrangler secret put JWT_SECRET      (openssl rand -base64 48)
+  //   npx wrangler secret put GEMINI_API_KEY
+  // For local `wrangler dev`, put the same keys in server/.dev.vars (gitignored).
+}
