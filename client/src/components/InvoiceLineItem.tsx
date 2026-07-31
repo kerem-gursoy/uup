@@ -12,30 +12,8 @@ import {
 import { useDebounce } from '../hooks/useDebounce.ts';
 import BarcodeScanner from './BarcodeScanner';
 import { currencySymbol, decimalPlaceholder, formatMoney } from '../lib/format';
+import type { LineItemState } from '../lib/invoiceReview';
 import { useT } from '../i18n';
-
-// Extended type for internal state management
-export interface LineItemState {
-    apply: boolean;
-    productId: number | null;
-    quantity: number | null;
-    unitPrice: number | null;
-    applyStock: boolean;
-    applyPrice: boolean;
-    parsedLineNo: number | null;
-    // Informational fields from parsed data or manual entry
-    name?: string;
-    description: string;
-    brand?: string | null;
-    barcode: string | null;
-    code: string | null;
-    matchedProductName?: string | null;
-    matchedBrand?: string | null;
-    matchScore?: number;
-    /** Set by the parser when the row does not add up - see the warning below. */
-    priceMismatch?: boolean;
-    totalPrice?: number | null;
-}
 
 interface InvoiceLineItemProps {
     line: LineItemState;

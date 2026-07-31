@@ -36,14 +36,41 @@ export type ParsedInvoiceLine = {
   priceMismatch: boolean;
 };
 
-export type ParsedInvoiceResponse = {
-  invoiceId: number;
-  supplierId: number;
-  supplierName: string;
+/**
+ * The half of a reading that comes from the document itself, and so is worth
+ * storing: re-reading the same photo can only produce the same answer.
+ *
+ * The supplier's id and name are deliberately NOT in here even though the
+ * response carries them. They come from the Supplier row, and caching them would
+ * mean a supplier renamed after the invoice was read still showed its old name
+ * on the review screen.
+ */
+export type CachedInvoiceParse = {
   supplierFromDocument: string | null;
   issueDate: string | null;
   currency: string | null;
   lines: ParsedInvoiceLine[];
+};
+
+export type ParsedInvoiceResponse = CachedInvoiceParse & {
+  invoiceId: number;
+  supplierId: number;
+  supplierName: string;
+  /** When this reading was taken. Identifies it, so a draft saved against an
+   *  older reading can be recognised and refused - see invoiceReview.ts. */
+  parsedAt: string;
+};
+
+/** The review screen's unfinished work, as handed back to it. */
+export type InvoiceDraft = {
+  lines: unknown[];
+  updatedAt: string;
+};
+
+/** Everything the review screen needs to open without doing any paid work. */
+export type InvoiceReviewState = {
+  parsed: ParsedInvoiceResponse | null;
+  draft: InvoiceDraft | null;
 };
 
 export type ApplyInvoiceLineInput = {

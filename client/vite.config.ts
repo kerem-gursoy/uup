@@ -6,15 +6,18 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
 
-  // Only the pure logic is covered: money parsing and formatting, and the
-  // translation lookup. Those are where a silent wrong number or a wrong plural
-  // could reach the database, and neither needs a rendered component.
+  // Covered: the pure logic where a silent wrong number or wrong plural could
+  // reach the database - money parsing and formatting, translation lookup - and
+  // the invoice review screen, where the thing at risk is not a number but
+  // somebody's half-finished work, and the behaviour worth pinning down (that
+  // reopening does not re-read a document already read) is only observable
+  // through a rendered component.
   //
-  // jsdom rather than node because i18n/locale.ts resolves the language when it
-  // is imported, which reads localStorage, navigator and document.
+  // jsdom rather than node for both reasons: i18n/locale.ts resolves the
+  // language on import, reading localStorage, navigator and document.
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
   },
   server: {
     // Exposed on the network so the app can be opened on a phone for testing.

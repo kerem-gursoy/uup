@@ -33,7 +33,10 @@ import {
   uploadInvoice,
   listInvoices,
   getInvoice,
+  getInvoiceReview,
   parseInvoice,
+  putInvoiceDraft,
+  deleteInvoiceDraft,
   applyParsedInvoice,
 } from "./controllers/invoices.js";
 
@@ -101,7 +104,12 @@ app.get("/reports/recent-activity", getRecentActivity);
 app.post("/invoices/upload", invoiceUpload.single("file"), uploadInvoice);
 app.get("/invoices", listInvoices);
 app.get("/invoices/:id", getInvoice);
+// The cheap read the review screen opens with; POST /parse is the one that
+// spends a Gemini call, and only when there is nothing stored or ?refresh=1.
+app.get("/invoices/:id/review", getInvoiceReview);
 app.post("/invoices/:id/parse", parseInvoice);
+app.put("/invoices/:id/draft", putInvoiceDraft);
+app.delete("/invoices/:id/draft", deleteInvoiceDraft);
 app.post("/invoices/:id/apply", applyParsedInvoice);
 
 // Last, so it sees anything the routes above throw - including multer's

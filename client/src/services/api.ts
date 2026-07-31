@@ -182,23 +182,38 @@ export interface AdjustStockResponse {
 // ERROR HANDLING
 // ============================================================================
 
-async function handleResponse<T>(response: Response): Promise<T> {
-    if (!response.ok) {
-        if (response.status === 401) {
-            // Tell the app the session is gone so it can return to the sign-in
-            // screen, rather than every page reporting its own odd failure.
-            window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
-            throw new ApiError(401, 'Your session has ended. Please sign in again.');
-        }
+async function throwIfFailed(response: Response): Promise<void> {
+    if (response.ok) return;
 
-        const error = await response.json().catch(() => ({ error: response.statusText }));
-        throw new ApiError(
-            response.status,
-            error.error || `Request failed: ${response.statusText}`,
-            error
-        );
+    if (response.status === 401) {
+        // Tell the app the session is gone so it can return to the sign-in
+        // screen, rather than every page reporting its own odd failure.
+        window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+        throw new ApiError(401, 'Your session has ended. Please sign in again.');
     }
+
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new ApiError(
+        response.status,
+        error.error || `Request failed: ${response.statusText}`,
+        error
+    );
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+    await throwIfFailed(response);
     return response.json();
+}
+
+/**
+ * For replies that carry no body - a 204 from a delete. Separate from
+ * handleResponse only because response.json() would throw on an empty body;
+ * failures are read exactly the same way, which is the point. Doing it by hand
+ * at the call site is what used to lose the 401 event, so a delete attempted
+ * with an expired session reported a puzzle instead of returning to sign-in.
+ */
+async function handleEmptyResponse(response: Response): Promise<void> {
+    await throwIfFailed(response);
 }
 
 // ============================================================================
@@ -299,10 +314,7 @@ export async function deleteSupplier(id: number): Promise<void> {
     const response = await fetchWithCredentials(`${API_BASE_URL}/suppliers/${id}`, {
         method: 'DELETE',
     });
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: response.statusText }));
-        throw new ApiError(response.status, error.error || `Delete failed: ${response.statusText}`);
-    }
+    return handleEmptyResponse(response);
 }
 
 // ============================================================================
@@ -376,10 +388,7 @@ export async function deleteProduct(id: number): Promise<void> {
     const response = await fetchWithCredentials(`${API_BASE_URL}/products/${id}`, {
         method: 'DELETE',
     });
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: response.statusText }));
-        throw new ApiError(response.status, error.error || `Delete failed: ${response.statusText}`);
-    }
+    return handleEmptyResponse(response);
 }
 
 export async function getProductByBarcode(barcode: string): Promise<Product> {
@@ -525,7 +534,33 @@ export interface ParsedInvoiceResponse {
     supplierFromDocument: string | null;
     issueDate: string | null;
     currency: string | null;
+    /**
+     * When this reading was taken. Identifies it: a draft is saved against the
+     * reading it was made from, so one written before a re-read can be told
+     * apart and refused rather than re-applied to lines that have moved.
+     */
+    parsedAt: string;
     lines: ParsedInvoiceLine[];
+}
+
+/**
+ * The review screen's unfinished work, as the server stored it.
+ *
+ * `lines` is unknown[] rather than the screen's own line type, and deliberately
+ * so. This is data that outlives the code that wrote it - a draft saved before a
+ * deploy is read back after one - so the screen validates it on the way in
+ * instead of the type system asserting a shape nobody checked.
+ */
+export interface InvoiceDraft {
+    lines: unknown[];
+    updatedAt: string;
+}
+
+/** Everything the review screen needs to open. Both halves may be absent. */
+export interface InvoiceReviewState {
+    /** null only when this invoice has never been read. */
+    parsed: ParsedInvoiceResponse | null;
+    draft: InvoiceDraft | null;
 }
 
 export interface ApplyInvoiceLineInput {
@@ -549,11 +584,67 @@ export interface ApplyResult {
     skippedLines: number;
 }
 
-export async function parseInvoice(id: number): Promise<ParsedInvoiceResponse> {
-    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/${id}/parse`, {
-        method: 'POST',
-    });
+/**
+ * Opens an invoice for review without spending anything: the stored reading and
+ * whatever review was left unfinished against it.
+ *
+ * `parsed` comes back null only for an invoice nobody has read yet - that is the
+ * one case where the screen has to call parseInvoice and wait.
+ */
+export async function getInvoiceReview(id: number): Promise<InvoiceReviewState> {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/${id}/review`);
+    return handleResponse<InvoiceReviewState>(response);
+}
+
+/**
+ * Reads the invoice photo, or hands back the reading already stored for it.
+ *
+ * `refresh` forces a fresh reading, discarding both the stored one and any draft
+ * made against it. That is the expensive path - a multi-second model call the
+ * shop pays for - so it belongs to an explicit "read it again", never to a page
+ * load.
+ */
+export async function parseInvoice(
+    id: number,
+    { refresh = false }: { refresh?: boolean } = {}
+): Promise<ParsedInvoiceResponse> {
+    const query = refresh ? '?refresh=1' : '';
+    const response = await fetchWithCredentials(
+        `${API_BASE_URL}/invoices/${id}/parse${query}`,
+        { method: 'POST' }
+    );
     return handleResponse<ParsedInvoiceResponse>(response);
+}
+
+/**
+ * Stores the unfinished review.
+ *
+ * `keepalive` is for the save fired as the app goes into the background, which
+ * is the whole reason any of this exists: it lets the request outlive the page
+ * that started it, so switching apps mid-invoice does not lose the last edit.
+ * Browsers cap keepalive bodies at 64KB, which a few hundred invoice lines sit
+ * comfortably under.
+ */
+export async function saveInvoiceDraft(
+    id: number,
+    draft: { parsedAt: string; lines: unknown[] },
+    { keepalive = false }: { keepalive?: boolean } = {}
+): Promise<InvoiceDraft> {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/${id}/draft`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+        keepalive,
+    });
+    return handleResponse<InvoiceDraft>(response);
+}
+
+/** Throws the unfinished review away, keeping the reading it was made against. */
+export async function discardInvoiceDraft(id: number): Promise<void> {
+    const response = await fetchWithCredentials(`${API_BASE_URL}/invoices/${id}/draft`, {
+        method: 'DELETE',
+    });
+    return handleEmptyResponse(response);
 }
 
 export async function applyInvoice(id: number, payload: ApplyInvoiceRequest): Promise<ApplyResult> {

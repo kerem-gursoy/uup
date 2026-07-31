@@ -1,9 +1,16 @@
 import multer from "multer";
 import { Request, Response } from "express";
 import { env } from "cloudflare:workers";
+import { HttpError } from "../lib/httpError.js";
 import { parseId } from "../utils/parseId.js";
 import { parseAndMatchInvoice } from "../services/invoiceParsing.js";
-import { applyInvoice, InvoiceApplyError } from "../services/invoiceApply.js";
+import { applyInvoice } from "../services/invoiceApply.js";
+import {
+  clearInvoiceDraft,
+  readInvoiceReviewState,
+  saveInvoiceDraft,
+  type SaveDraftRequest,
+} from "../services/invoiceReview.js";
 import { ApplyInvoiceRequest } from "../services/invoiceTypes.js";
 
 /**
@@ -151,36 +158,130 @@ export const getInvoice = async (req: Request, res: Response) => {
   }
 };
 
-export const parseInvoice = async (req: Request, res: Response) => {
-  let id: number;
+/** The id in the path, or null with a 400 already written to the response. */
+const invoiceIdFrom = (req: Request, res: Response): number | null => {
   try {
-    id = parseId(req.params.id);
+    return parseId(req.params.id);
   } catch {
-    return res.status(400).json({ error: "Invalid invoice id" });
+    res.status(400).json({ error: "Invalid invoice id" });
+    return null;
   }
+};
+
+/**
+ * Rejections carry their own status and a message written for the user; anything
+ * else is a genuine fault and says nothing beyond that.
+ */
+const replyToFailure = (
+  res: Response,
+  err: unknown,
+  context: string,
+  fallback: string
+) => {
+  if (err instanceof HttpError) {
+    return res.status(err.status).json({ error: err.message });
+  }
+  console.error(context, err);
+  return res.status(500).json({ error: fallback });
+};
+
+/**
+ * What the review screen needs to open: the stored reading, and whatever review
+ * was left unfinished against it. Either may be null.
+ *
+ * A plain read on purpose. Its whole point is that reopening an invoice costs
+ * nothing - no Gemini call, no write - which is why the reading is not produced
+ * here on demand. Ask for one with POST /parse.
+ */
+export const getInvoiceReview = async (req: Request, res: Response) => {
+  const id = invoiceIdFrom(req, res);
+  if (id === null) return;
 
   try {
-    const parsed = await parseAndMatchInvoice(req.prisma, id);
+    return res.json(await readInvoiceReviewState(req.prisma, id));
+  } catch (err) {
+    return replyToFailure(
+      res,
+      err,
+      "Error loading invoice review state:",
+      "Failed to load invoice"
+    );
+  }
+};
+
+/**
+ * Reads the invoice, or hands back the reading already stored for it.
+ *
+ * `?refresh=1` forces a fresh reading. It is the only thing on this route that
+ * spends money, so it stays opt-in and explicit rather than something a page
+ * reload can trigger by accident.
+ */
+export const parseInvoice = async (req: Request, res: Response) => {
+  const id = invoiceIdFrom(req, res);
+  if (id === null) return;
+
+  const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+
+  try {
+    const parsed = await parseAndMatchInvoice(req.prisma, id, { refresh });
     return res.json(parsed);
   } catch (err) {
-    console.error("Error parsing invoice:", err);
-    if (err instanceof Error && err.message === "Invoice not found") {
-      return res.status(404).json({ error: "Invoice not found" });
-    }
     if (err instanceof Error && err.message.includes("GEMINI_API_KEY")) {
+      console.error("Error parsing invoice:", err);
       return res.status(500).json({ error: "Gemini misconfiguration" });
     }
-    return res.status(500).json({ error: "Failed to parse invoice" });
+    return replyToFailure(
+      res,
+      err,
+      "Error parsing invoice:",
+      "Failed to parse invoice"
+    );
+  }
+};
+
+/** Stores the unfinished review, so leaving the screen is not losing the work. */
+export const putInvoiceDraft = async (req: Request, res: Response) => {
+  const id = invoiceIdFrom(req, res);
+  if (id === null) return;
+
+  try {
+    const draft = await saveInvoiceDraft(
+      req.prisma,
+      id,
+      req.body as SaveDraftRequest
+    );
+    return res.json(draft);
+  } catch (err) {
+    return replyToFailure(
+      res,
+      err,
+      "Error saving invoice draft:",
+      "Failed to save draft"
+    );
+  }
+};
+
+/** Throws the unfinished review away, keeping the reading it was made against. */
+export const deleteInvoiceDraft = async (req: Request, res: Response) => {
+  const id = invoiceIdFrom(req, res);
+  if (id === null) return;
+
+  try {
+    await clearInvoiceDraft(req.prisma, id);
+    return res.status(204).end();
+  } catch (err) {
+    return replyToFailure(
+      res,
+      err,
+      "Error discarding invoice draft:",
+      "Failed to discard draft"
+    );
   }
 };
 
 export const applyParsedInvoice = async (req: Request, res: Response) => {
-  let id: number;
-  try {
-    id = parseId(req.params.id);
-  } catch {
-    return res.status(400).json({ error: "Invalid invoice id" });
-  }
+  const id = invoiceIdFrom(req, res);
+  if (id === null) return;
 
   const body = req.body as ApplyInvoiceRequest;
   if (!body || !Array.isArray(body.lines)) {
@@ -191,12 +292,11 @@ export const applyParsedInvoice = async (req: Request, res: Response) => {
     const summary = await applyInvoice(req.prisma, id, body);
     return res.json(summary);
   } catch (err) {
-    // Rejections carry their own status and a message written for the user;
-    // anything else is a genuine fault and says nothing beyond that.
-    if (err instanceof InvoiceApplyError) {
-      return res.status(err.status).json({ error: err.message });
-    }
-    console.error("Error applying invoice:", err);
-    return res.status(500).json({ error: "Failed to apply invoice" });
+    return replyToFailure(
+      res,
+      err,
+      "Error applying invoice:",
+      "Failed to apply invoice"
+    );
   }
 };

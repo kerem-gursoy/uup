@@ -1,25 +1,24 @@
 import type { Prisma } from "@prisma/client";
 import type { AppPrisma } from "../lib/prisma.js";
+import { HttpError } from "../lib/httpError.js";
 import { ApplyInvoiceRequest } from "./invoiceTypes.js";
+import { CLEARED_DRAFT } from "./invoiceReview.js";
 import { recordPrice } from "./inventory.js";
 
 /**
- * A rejected request rather than a server fault, carrying the status the
- * controller should answer with.
+ * A line this invoice cannot be applied on, named so the reviewer knows which
+ * one to go and fix.
  *
- * The status travels with the error because the alternative - matching on
- * message text - silently misclassified anything whose wording drifted. Two of
- * the four validation failures below ("Quantity must be non-zero...", "Product
- * not found...") did not begin with "Invalid", so a user who picked a
- * since-deleted product got a blank 500 instead of a message naming the line.
+ * Carries its status through HttpError rather than by message text: two of the
+ * four validation failures below ("Quantity must be non-zero...", "Product not
+ * found...") do not begin with "Invalid", so matching on wording gave a user
+ * who picked a since-deleted product a blank 500 instead of a message naming
+ * the line.
  */
-export class InvoiceApplyError extends Error {
-  readonly status: number;
-
+export class InvoiceApplyError extends HttpError {
   constructor(message: string, status: number) {
-    super(message);
+    super(message, status);
     this.name = "InvoiceApplyError";
-    this.status = status;
   }
 }
 
@@ -149,7 +148,14 @@ export const applyInvoice = async (
   writes.push(
     client.invoice.update({
       where: { id: invoiceId },
-      data: { status: "APPLIED" },
+      data: {
+        status: "APPLIED",
+        // The review is over, so its unfinished copy is no longer unfinished
+        // work - it is a stale second version of what was just written to stock
+        // and price history. The reading stays: it is what these movements came
+        // from, and the invoice list still links here.
+        ...CLEARED_DRAFT,
+      },
     })
   );
 

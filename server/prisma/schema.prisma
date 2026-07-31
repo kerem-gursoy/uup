@@ -42,6 +42,23 @@ model Invoice {
   mimeType     String
   status       String    @default("UPLOADED")
   createdAt    DateTime  @default(now())
+
+  /// What the model read off the document, as JSON - see services/invoiceReview.ts
+  /// for the shape. Kept because the document is immutable and the reading is
+  /// slow and paid for: re-deriving it every time the review screen opens is a
+  /// second Gemini call for an answer we already have.
+  parsedJson     String?
+  parsedAt       DateTime?
+
+  /// The reviewer's unfinished work on the review screen, so closing the app
+  /// mid-invoice is not the same as throwing the work away. Opaque JSON on
+  /// purpose - it is that screen's own state, and the server has no business
+  /// having an opinion about it beyond the guards in services/invoiceReview.ts.
+  ///
+  /// Always belongs to the reading in `parsedJson`: a re-read clears it, because
+  /// its line positions would no longer refer to anything.
+  draftJson      String?
+  draftUpdatedAt DateTime?
 }
 
 /// One dated price entry for a product.
