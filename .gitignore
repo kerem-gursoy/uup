@@ -64,3 +64,9 @@ coverage
 
 # Local review artifacts (generated HTML + screenshots, not project files)
 .lavish/
+
+# Exported Claude Code transcripts, kept as a human-readable record of why the
+# bigger changes were made - the reasoning behind a commit rather than the
+# commit itself. Local notes, not project files: they are raw terminal dumps,
+# they date quickly, and nothing in the build reads them.
+session-logs/
