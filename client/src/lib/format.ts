@@ -178,12 +178,35 @@ export function formatPercent(percent: number): string {
     return percentFormatter().format(percent / 100);
 }
 
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Reads a value into a Date, treating a bare "yyyy-mm-dd" as a calendar date.
+ *
+ * This is the reading half of the trap dateInputToISO guards on the writing
+ * side. `new Date("2025-11-17")` is midnight *UTC*, which formats as 16 November
+ * for anyone west of Greenwich - so an invoice dated the 17th was shown, and
+ * checked against the paper, as the 16th. A date printed on an invoice is a day,
+ * not an instant, and belongs at local midnight.
+ *
+ * Anything carrying a time - every timestamp the server sends - is an instant
+ * and is left exactly as it was.
+ */
+function toDate(value: string | Date): Date {
+    if (typeof value !== 'string') return value;
+
+    const parts = DATE_ONLY.exec(value);
+    if (!parts) return new Date(value);
+
+    return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+}
+
 /**
  * Dates are spelled out ("3 Jun 2026") rather than numeric, because 03/06/2026
  * means two different days depending on who is reading it.
  */
 export function formatDate(value: string | Date): string {
-    const date = typeof value === 'string' ? new Date(value) : value;
+    const date = toDate(value);
     if (Number.isNaN(date.getTime())) return '';
 
     return dateFormatter().format(date);
@@ -191,7 +214,7 @@ export function formatDate(value: string | Date): string {
 
 /** Date and time together, for stamps where the hour is part of the fact. */
 export function formatDateTime(value: string | Date): string {
-    const date = typeof value === 'string' ? new Date(value) : value;
+    const date = toDate(value);
     if (Number.isNaN(date.getTime())) return '';
 
     return dateTimeFormatter().format(date);
@@ -199,7 +222,7 @@ export function formatDateTime(value: string | Date): string {
 
 /** "Today" and "Yesterday" read faster than a date when that is what it is. */
 export function formatDateRelative(value: string | Date): string {
-    const date = typeof value === 'string' ? new Date(value) : value;
+    const date = toDate(value);
     if (Number.isNaN(date.getTime())) return '';
 
     const startOfDay = (d: Date) =>

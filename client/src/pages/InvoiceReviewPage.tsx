@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft,
-    Plus,
+    ArrowRight,
     AlertTriangle,
     Check,
     CheckCircle2,
+    CircleSlash,
     CloudOff,
     History,
+    Info,
     Loader2,
+    Plus,
     RefreshCw,
+    X,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { toast } from 'sonner';
@@ -23,7 +27,16 @@ import {
     type ApplyInvoiceRequest,
 } from '../services/api';
 import InvoiceLineItem from '../components/InvoiceLineItem';
-import { linesFromDraft, linesFromParse, type LineItemState } from '../lib/invoiceReview';
+import { Button, ConfirmDialog } from '../components/ui';
+import {
+    blankLine,
+    lineState,
+    linesFromDraft,
+    linesFromParse,
+    tallyLines,
+    type LineItemState,
+    type LineState,
+} from '../lib/invoiceReview';
 import { useAutosave, type AutosaveStatus } from '../hooks/useAutosave';
 import { formatDate, formatDateRelative } from '../lib/format';
 import { pluralKey, useT, useTPlural } from '../i18n';
@@ -33,13 +46,24 @@ import { T } from '../i18n/T';
  * Checking what the parser read off a supplier invoice, before it is written into
  * stock and cost history.
  *
- * Nothing on this screen is throwaway. The reading cost a Gemini call, and the
- * corrections on top of it are somebody working through a paper invoice line by
- * line - so both are kept on the server: the reading because re-deriving it from
- * a photograph that cannot change is paying twice for the same answer, and the
- * corrections because a shop assistant gets interrupted. Opening this screen a
- * second time picks up where the first left off, instead of starting over.
+ * The screen is built around the fact that this is not a quick task and should
+ * not pretend to be. Applying an invoice moves real stock and rewrites what the
+ * shop believes each item costs, so the work is: go down the paper, line by line,
+ * and settle each one. What the screen owes that work is a way to see how much of
+ * it is left - which is why lines are closed until opened, sorted into settled and
+ * unsettled, and counted at the top.
+ *
+ * Nothing here is throwaway either. The reading cost a Gemini call and the
+ * corrections are somebody's afternoon, so both are kept server-side and this
+ * screen picks up exactly where it was left.
  */
+
+/** Which lines the list is showing. Document order is never disturbed. */
+type Filter = 'all' | LineState;
+
+const rowDomId = (uid: string) => `invoice-line-${uid}`;
+const TIPS_DISMISSED_KEY = 'uup.invoiceReviewTipsSeen';
+
 export default function InvoiceReviewPage() {
     const t = useT();
     const tPlural = useTPlural();
@@ -63,6 +87,17 @@ export default function InvoiceReviewPage() {
     // language when the reader switches, and a message translated back when it
     // was caught would stay in the old one.
     const [error, setError] = useState<unknown>(null);
+
+    const [filter, setFilter] = useState<Filter>('all');
+    /** Only one line is ever open. The screen is long enough already. */
+    const [openUid, setOpenUid] = useState<string | null>(null);
+    const [confirmingReread, setConfirmingReread] = useState(false);
+    const [showTips, setShowTips] = useState(
+        () => localStorage.getItem(TIPS_DISMISSED_KEY) !== '1'
+    );
+
+    /** Set when a row should be scrolled to once it has rendered open. */
+    const scrollTo = useRef<string | null>(null);
 
     const parsedAt = invoice?.parsedAt ?? null;
 
@@ -145,45 +180,58 @@ export default function InvoiceReviewPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [invoiceId]);
 
-    const handleLineChange = (index: number, updates: Partial<LineItemState>) => {
+    // Scrolling happens after the row has rendered in its open state, so that
+    // "centre this row" measures the row a reviewer is about to read, not the
+    // one-line version of it that was on screen a moment ago.
+    useEffect(() => {
+        if (!scrollTo.current) return;
+        const target = document.getElementById(rowDomId(scrollTo.current));
+        scrollTo.current = null;
+        target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, [openUid, filter]);
+
+    const tally = useMemo(() => tallyLines(linesState), [linesState]);
+
+    const visibleLines = useMemo(
+        () =>
+            linesState
+                .map((line, index) => ({ line, index }))
+                .filter(({ line }) => filter === 'all' || lineState(line) === filter),
+        [linesState, filter]
+    );
+
+    const updateLine = (index: number, updates: Partial<LineItemState>) => {
         setEdited(true);
-        setLinesState(prev => {
-            const newLines = [...prev];
-            newLines[index] = { ...newLines[index], ...updates };
-            return newLines;
+        setLinesState((prev) => {
+            const next = [...prev];
+            next[index] = { ...next[index]!, ...updates };
+            return next;
         });
     };
 
     const handleAddManualLine = () => {
+        const line = blankLine();
         setEdited(true);
-        setLinesState(prev => [
-            ...prev,
-            {
-                apply: true,
-                productId: null,
-                quantity: null,
-                unitPrice: null,
-                applyStock: true,
-                applyPrice: true,
-                parsedLineNo: null,
-                name: '',
-                description: '',
-                brand: null,
-                barcode: null,
-                code: null
-            }
-        ]);
-        // Scroll to bottom after render?
-        setTimeout(() => {
-            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-        }, 100);
+        setLinesState((prev) => [...prev, line]);
+        // Added lines are empty by definition, so they open straight away - there
+        // is nothing to read on a closed row that has nothing in it yet.
+        setFilter('all');
+        setOpenUid(line.uid);
+        scrollTo.current = line.uid;
     };
 
     const handleRemoveLine = (index: number) => {
-        if (confirm(t('invoice.review.removeConfirm'))) {
-            setEdited(true);
-            setLinesState(prev => prev.filter((_, i) => i !== index));
-        }
+        setEdited(true);
+        setLinesState((prev) => prev.filter((_, i) => i !== index));
+        setOpenUid(null);
+    };
+
+    /** Opens the first line still wanting a decision, and goes to it. */
+    const reviewNext = () => {
+        const next = linesState.find((line) => lineState(line) === 'attention');
+        if (!next) return;
+        setOpenUid(next.uid);
+        scrollTo.current = next.uid;
     };
 
     /**
@@ -196,9 +244,6 @@ export default function InvoiceReviewPage() {
      */
     const handleReread = async () => {
         if (invoiceId === null) return;
-
-        const hasWork = edited || restoredAt !== null;
-        if (hasWork && !confirm(t('invoice.review.rereadConfirm'))) return;
 
         // The draft is about to be replaced on the server. Letting a debounced
         // save fire after that would be writing corrections against lines that no
@@ -213,6 +258,8 @@ export default function InvoiceReviewPage() {
             setLinesState(linesFromParse(parsed));
             setRestoredAt(null);
             setEdited(false);
+            setOpenUid(null);
+            setFilter('all');
             toast.success(t('invoice.review.rereadDone'));
         } catch (err) {
             console.error('Failed to re-read invoice:', err);
@@ -226,10 +273,12 @@ export default function InvoiceReviewPage() {
     const handleApply = async () => {
         if (invoiceId === null) return;
 
-        // Validation: Check if any applied lines are missing product ID
-        const invalidLines = linesState.filter(l => l.apply && !l.productId);
-        if (invalidLines.length > 0) {
-            toast.error(tPlural('invoice.review.needProduct', invalidLines.length));
+        // Should be unreachable - the button is disabled while anything is
+        // unsettled - but a stray line must never reach the server as a 400 that
+        // names a line number the reviewer cannot see.
+        if (tally.attention > 0) {
+            setFilter('attention');
+            reviewNext();
             return;
         }
 
@@ -245,8 +294,8 @@ export default function InvoiceReviewPage() {
                     quantity: line.quantity,
                     unitPrice: line.unitPrice,
                     applyStock: line.applyStock,
-                    applyPrice: line.applyPrice
-                }))
+                    applyPrice: line.applyPrice,
+                })),
             };
 
             const result = await applyInvoice(invoiceId, payload);
@@ -257,14 +306,18 @@ export default function InvoiceReviewPage() {
             discardPendingDraft();
 
             toast.success(tPlural('invoice.review.applied', result.appliedLines));
-            navigate('/'); // Or to invoice detail if it exists
-
+            navigate('/invoices');
         } catch (err) {
             console.error('Failed to apply invoice:', err);
             toast.error(errorMessage(err, t('error.invoiceApply')));
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const dismissTips = () => {
+        localStorage.setItem(TIPS_DISMISSED_KEY, '1');
+        setShowTips(false);
     };
 
     if (loading) {
@@ -299,24 +352,22 @@ export default function InvoiceReviewPage() {
                         ? errorMessage(error, t('error.invoiceLoad'))
                         : t('invoice.review.notFound')}
                 </p>
-                <button
-                    onClick={() => navigate('/invoices/upload')}
-                    className="text-blue-600 font-medium hover:underline"
-                >
-                    {t('invoice.review.backToUpload')}
-                </button>
+                <Button variant="secondary" onClick={() => navigate('/invoices')}>
+                    {t('invoice.review.backToInvoices')}
+                </Button>
             </div>
         );
     }
 
-    const appliedCount = linesState.filter(l => l.apply).length;
+    const blocked = tally.attention > 0 || tally.ready === 0;
 
     return (
-        <div className="pb-32">
-            {/* Header */}
-            <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-                <div className="max-w-3xl mx-auto px-4 py-4">
-                    <div className="flex items-center gap-3 mb-4">
+        // Enough to clear the action bar at its tallest - two rows when lines are
+        // outstanding - plus the phone's own navigation sitting under it.
+        <div className="pb-56 md:pb-40">
+            <header className="bg-white border-b border-slate-200 sticky top-16 z-20 -mx-4 md:-mx-8 px-4 md:px-8">
+                <div className="max-w-3xl mx-auto py-3">
+                    <div className="flex items-center gap-3">
                         <button
                             onClick={() => navigate('/invoices')}
                             aria-label={t('common.back')}
@@ -325,122 +376,339 @@ export default function InvoiceReviewPage() {
                             <ArrowLeft size={20} />
                         </button>
                         <div className="flex-1 min-w-0">
-                            <h1 className="text-xl font-bold text-slate-900 truncate">
+                            <h1 className="text-lg font-bold text-slate-900 truncate">
                                 {t('invoice.review.title')}
                             </h1>
                             {/* Fixed height whether or not there is anything to
-                                say, so the invoice details below do not jump the
-                                moment the first edit turns this line on. */}
-                            <div className="h-4 mt-0.5 flex items-center">
+                                say, so the details below do not jump the moment
+                                the first edit turns this line on. */}
+                            <div className="h-4 flex items-center">
                                 <DraftStatus status={draftStatus} restoredAt={restoredAt} />
                             </div>
                         </div>
                         <button
-                            onClick={handleReread}
+                            onClick={() => setConfirmingReread(true)}
                             aria-label={t('invoice.review.reread')}
-                            className="shrink-0 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:scale-95 transition"
+                            className="shrink-0 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 min-h-[44px] text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:scale-95 transition"
                         >
-                            <RefreshCw size={16} />
-                            <span className="hidden sm:inline">
-                                {t('invoice.review.reread')}
-                            </span>
+                            <RefreshCw size={16} aria-hidden="true" />
+                            <span className="hidden sm:inline">{t('invoice.review.reread')}</span>
                         </button>
                     </div>
+                </div>
+            </header>
 
-                    <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="max-w-3xl mx-auto space-y-5 pt-5">
+                <section
+                    aria-label={t('invoice.review.documentLabel')}
+                    className="bg-white rounded-2xl border border-slate-200 p-4"
+                >
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                         <div>
-                            <div className="text-slate-500 text-xs uppercase tracking-wider font-semibold">
-                                {t('invoice.review.supplier')}
-                            </div>
-                            <div className="font-medium text-slate-900">{invoice.supplierName}</div>
-                            {invoice.supplierFromDocument && invoice.supplierFromDocument !== invoice.supplierName && (
-                                <div className="text-xs text-slate-400">
-                                    {t('invoice.review.onDocument', {
-                                        name: invoice.supplierFromDocument,
-                                    })}
-                                </div>
-                            )}
+                            <dt className="text-slate-500">{t('invoice.review.supplier')}</dt>
+                            <dd className="font-semibold text-slate-900">{invoice.supplierName}</dd>
+                            {invoice.supplierFromDocument &&
+                                invoice.supplierFromDocument !== invoice.supplierName && (
+                                    <dd className="text-xs text-slate-400">
+                                        {t('invoice.review.onDocument', {
+                                            name: invoice.supplierFromDocument,
+                                        })}
+                                    </dd>
+                                )}
                         </div>
                         <div className="text-right">
-                            <div className="text-slate-500 text-xs uppercase tracking-wider font-semibold">
-                                {t('invoice.review.date')}
-                            </div>
-                            <div className="font-medium text-slate-900">
+                            <dt className="text-slate-500">{t('invoice.review.date')}</dt>
+                            <dd className="font-semibold text-slate-900">
                                 {invoice.issueDate
                                     ? formatDate(invoice.issueDate)
                                     : t('invoice.review.unknownDate')}
-                            </div>
+                            </dd>
                         </div>
-                    </div>
-                </div>
-            </div>
+                    </dl>
+                </section>
 
-            {/* Content */}
-            <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="font-semibold text-slate-900">
-                        {t('invoice.review.lineItems', { count: linesState.length })}
-                    </h2>
+                {showTips && <HowThisWorks onDismiss={dismissTips} />}
+
+                <Progress
+                    tally={tally}
+                    total={linesState.length}
+                    filter={filter}
+                    onFilter={(next) => {
+                        setFilter(next);
+                        setOpenUid(null);
+                    }}
+                    onReviewNext={reviewNext}
+                />
+
+                <section aria-label={t('invoice.review.linesLabel')}>
+                    {visibleLines.length === 0 ? (
+                        <p className="text-center text-slate-500 bg-white border border-slate-200 rounded-2xl py-10 px-5">
+                            {filter === 'all'
+                                ? t('invoice.review.noLines')
+                                : t('invoice.review.noneInFilter')}
+                        </p>
+                    ) : (
+                        <ul className="space-y-3">
+                            {visibleLines.map(({ line, index }) => (
+                                <InvoiceLineItem
+                                    key={line.uid}
+                                    id={rowDomId(line.uid)}
+                                    line={line}
+                                    index={index}
+                                    open={openUid === line.uid}
+                                    onToggle={(open) => setOpenUid(open ? line.uid : null)}
+                                    onChange={updateLine}
+                                    onRemove={handleRemoveLine}
+                                    supplierId={invoice.supplierId}
+                                />
+                            ))}
+                        </ul>
+                    )}
+
                     <button
+                        type="button"
                         onClick={handleAddManualLine}
-                        className="text-sm text-blue-600 font-medium flex items-center gap-1 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
+                        className="mt-3 w-full min-h-[52px] rounded-2xl border-2 border-dashed border-slate-300 text-slate-600 font-medium flex items-center justify-center gap-2 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50/50 transition"
                     >
-                        <Plus size={16} />
+                        <Plus size={20} aria-hidden="true" />
                         {t('invoice.review.addLine')}
                     </button>
-                </div>
-
-                <div className="space-y-4">
-                    {linesState.map((line, index) => (
-                        <InvoiceLineItem
-                            key={index}
-                            index={index}
-                            line={line}
-                            onChange={handleLineChange}
-                            onRemove={handleRemoveLine}
-                            isManual={line.parsedLineNo === null}
-                            supplierId={invoice.supplierId}
-                        />
-                    ))}
-                </div>
+                    <p className="mt-2 text-sm text-slate-500 text-center">
+                        {t('invoice.review.addLineHint')}
+                    </p>
+                </section>
             </div>
 
-            {/* Footer Actions */}
-            <div className="fixed left-0 right-0 bg-white border-t border-slate-200 p-4 safe-area-bottom bottom-16 md:bottom-0">
-                <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
-                    <div className="text-sm text-slate-500">
-                        {/* pluralKey picks the form Intl would, so the bold count can
-                            sit inside a sentence that inflects in English and not in
-                            Turkish, without a hand-written ternary here. */}
-                        <T
-                            k={pluralKey('invoice.review.selected', appliedCount)}
-                            values={{
-                                count: (
-                                    <strong className="text-slate-900">{appliedCount}</strong>
-                                ),
-                            }}
-                        />
+            <div className="fixed left-0 right-0 bg-white border-t border-slate-200 p-4 safe-area-bottom bottom-16 md:bottom-0 z-30">
+                <div className="max-w-3xl mx-auto space-y-3">
+                    {tally.attention > 0 ? (
+                        <div className="flex items-center justify-between gap-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+                            <p className="text-sm text-amber-900 flex items-center gap-2">
+                                <AlertTriangle size={16} aria-hidden="true" className="shrink-0" />
+                                {tPlural('invoice.review.blocked', tally.attention)}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setFilter('attention');
+                                    reviewNext();
+                                }}
+                                className="shrink-0 text-sm font-semibold text-amber-900 underline underline-offset-2 min-h-[44px] px-2"
+                            >
+                                {t('invoice.review.showThem')}
+                            </button>
+                        </div>
+                    ) : null}
+
+                    <div className="flex items-center justify-between gap-4">
+                        <p className="text-sm text-slate-600" id="apply-summary">
+                            {/* pluralKey picks the form Intl would, so the bold
+                                count can sit inside a sentence that inflects in
+                                English and not in Turkish. */}
+                            <T
+                                k={pluralKey('invoice.review.willApply', tally.ready)}
+                                values={{
+                                    count: (
+                                        <strong className="text-slate-900">{tally.ready}</strong>
+                                    ),
+                                }}
+                            />
+                        </p>
+                        <Button
+                            onClick={handleApply}
+                            busy={submitting}
+                            disabled={blocked}
+                            aria-describedby="apply-summary"
+                            icon={<CheckCircle2 size={20} />}
+                        >
+                            {submitting ? t('invoice.review.applying') : t('invoice.review.apply')}
+                        </Button>
                     </div>
-                    <button
-                        onClick={handleApply}
-                        disabled={submitting || appliedCount === 0}
-                        className="bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg shadow-blue-200 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 disabled:shadow-none"
-                    >
-                        {submitting ? (
-                            <>
-                                <Loader2 size={20} className="animate-spin" />
-                                {t('invoice.review.applying')}
-                            </>
-                        ) : (
-                            <>
-                                <CheckCircle2 size={20} />
-                                {t('invoice.review.apply')}
-                            </>
-                        )}
-                    </button>
                 </div>
             </div>
+
+            {confirmingReread && (
+                <ConfirmDialog
+                    title={t('invoice.review.rereadTitle')}
+                    body={
+                        edited || restoredAt
+                            ? t('invoice.review.rereadConfirm')
+                            : t('invoice.review.rereadBody')
+                    }
+                    confirmLabel={t('invoice.review.reread')}
+                    destructive={Boolean(edited || restoredAt)}
+                    onConfirm={handleReread}
+                    onClose={() => setConfirmingReread(false)}
+                />
+            )}
         </div>
+    );
+}
+
+/**
+ * What this screen is for, for somebody meeting it the first time.
+ *
+ * Three things nobody can infer from the controls: that the reading is a guess
+ * worth checking, that nothing is written until Apply, and what Apply actually
+ * does to the shop's numbers. Dismissible, because it stops being news.
+ */
+function HowThisWorks({ onDismiss }: { onDismiss: () => void }) {
+    const t = useT();
+
+    return (
+        <section className="relative bg-blue-50 border border-blue-200 rounded-2xl p-4 pr-12">
+            <h2 className="font-semibold text-blue-950 flex items-center gap-2">
+                <Info size={18} aria-hidden="true" />
+                {t('invoice.review.tipsTitle')}
+            </h2>
+            <ul className="mt-2 space-y-1.5 text-sm text-blue-900 list-disc pl-5">
+                <li>{t('invoice.review.tipCheck')}</li>
+                <li>{t('invoice.review.tipProduct')}</li>
+                <li>{t('invoice.review.tipApply')}</li>
+            </ul>
+            <button
+                type="button"
+                onClick={onDismiss}
+                aria-label={t('common.close')}
+                className="absolute top-2 right-2 p-2 rounded-full text-blue-700 hover:bg-blue-100"
+            >
+                <X size={18} />
+            </button>
+        </section>
+    );
+}
+
+/**
+ * How much of the invoice is settled, and a way to see only what is not.
+ *
+ * The filters keep document order rather than grouping, because the reviewer is
+ * working down a piece of paper and a list that reshuffles itself as they go is
+ * a list they have to find their place in again after every decision.
+ */
+function Progress({
+    tally,
+    total,
+    filter,
+    onFilter,
+    onReviewNext,
+}: {
+    tally: ReturnType<typeof tallyLines>;
+    total: number;
+    filter: Filter;
+    onFilter: (filter: Filter) => void;
+    onReviewNext: () => void;
+}) {
+    const t = useT();
+    const settled = tally.ready + tally.excluded;
+
+    return (
+        <section className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+                <h2 className="font-semibold text-slate-900">{t('invoice.review.progressTitle')}</h2>
+                {/* Announced, so the count reaching a screen reader keeps step
+                    with the count on screen as lines get settled. */}
+                <p aria-live="polite" className="text-sm text-slate-600 tabular-nums">
+                    {t('invoice.review.progressCount', { done: settled, total })}
+                </p>
+            </div>
+
+            <div
+                className="h-2 rounded-full bg-slate-100 overflow-hidden"
+                role="progressbar"
+                aria-valuenow={settled}
+                aria-valuemin={0}
+                aria-valuemax={total}
+                aria-label={t('invoice.review.progressTitle')}
+            >
+                <div
+                    className="h-full bg-emerald-500 transition-all duration-300"
+                    style={{ width: total === 0 ? '0%' : `${(settled / total) * 100}%` }}
+                />
+            </div>
+
+            <div
+                role="group"
+                aria-label={t('invoice.review.filterLabel')}
+                className="flex gap-2 overflow-x-auto -mx-1 px-1 py-0.5"
+            >
+                <FilterPill
+                    active={filter === 'all'}
+                    onClick={() => onFilter('all')}
+                    label={t('invoice.review.filterAll')}
+                    count={total}
+                />
+                <FilterPill
+                    active={filter === 'attention'}
+                    onClick={() => onFilter('attention')}
+                    label={t('invoice.review.filterAttention')}
+                    count={tally.attention}
+                    icon={<AlertTriangle size={14} />}
+                    tone="amber"
+                />
+                <FilterPill
+                    active={filter === 'ready'}
+                    onClick={() => onFilter('ready')}
+                    label={t('invoice.review.filterReady')}
+                    count={tally.ready}
+                    icon={<Check size={14} />}
+                    tone="emerald"
+                />
+                <FilterPill
+                    active={filter === 'excluded'}
+                    onClick={() => onFilter('excluded')}
+                    label={t('invoice.review.filterExcluded')}
+                    count={tally.excluded}
+                    icon={<CircleSlash size={14} />}
+                />
+            </div>
+
+            {tally.attention > 0 && (
+                <Button
+                    variant="secondary"
+                    onClick={onReviewNext}
+                    icon={<ArrowRight size={20} />}
+                    className="w-full"
+                >
+                    {t('invoice.review.reviewNext')}
+                </Button>
+            )}
+        </section>
+    );
+}
+
+function FilterPill({
+    active,
+    onClick,
+    label,
+    count,
+    icon,
+    tone,
+}: {
+    active: boolean;
+    onClick: () => void;
+    label: string;
+    count: number;
+    icon?: ReactNode;
+    tone?: 'amber' | 'emerald';
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            aria-pressed={active}
+            className={clsx(
+                'shrink-0 inline-flex items-center gap-1.5 rounded-full px-3.5 min-h-[44px] text-sm font-medium border transition',
+                active
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50',
+                !active && tone === 'amber' && count > 0 && 'text-amber-900 border-amber-300 bg-amber-50',
+                !active && tone === 'emerald' && count > 0 && 'text-emerald-900 border-emerald-300 bg-emerald-50'
+            )}
+        >
+            {icon}
+            {label}
+            <span className="tabular-nums opacity-80">{count}</span>
+        </button>
     );
 }
 

@@ -121,6 +121,23 @@ describe('formatDate', () => {
     it('returns an empty string for an unusable date rather than "Invalid Date"', () => {
         expect(formatDate('not a date')).toBe('');
     });
+
+    it('shows a date-only value as the day it says, in every timezone', () => {
+        // The date printed on an invoice is a calendar day, not an instant.
+        // new Date("2025-11-17") is midnight UTC, so west of Greenwich this
+        // rendered as 16 November - and was checked against the paper as the
+        // 16th, on a screen whose whole job is catching that kind of mismatch.
+        withLang('en', () => {
+            expect(formatDate('2025-11-17')).toContain('17');
+            expect(formatDate('2026-01-01')).toContain('1 Jan 2026');
+        });
+    });
+
+    it('still treats a value carrying a time as the instant it is', () => {
+        withLang('en', () => {
+            expect(formatDate(new Date(2026, 5, 3, 12))).toContain('3 Jun 2026');
+        });
+    });
 });
 
 describe('compareNames', () => {

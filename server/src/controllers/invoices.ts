@@ -102,9 +102,22 @@ export const uploadInvoice = async (req: Request, res: Response) => {
 
 export const listInvoices = async (req: Request, res: Response) => {
   try {
+    // Explicitly selected rather than `include: { supplier: true }`, which takes
+    // every scalar on the row - and those now include the whole cached reading
+    // and the whole draft. Listing twenty invoices would have read, and thrown
+    // away, twenty parsed documents.
     const invoices = await req.prisma.invoice.findMany({
       orderBy: { createdAt: "desc" },
-      include: { supplier: true },
+      select: {
+        id: true,
+        originalName: true,
+        storedPath: true,
+        mimeType: true,
+        status: true,
+        createdAt: true,
+        draftUpdatedAt: true,
+        supplier: { select: { id: true, name: true } },
+      },
     });
 
     res.json(
@@ -119,6 +132,10 @@ export const listInvoices = async (req: Request, res: Response) => {
         mimeType: inv.mimeType,
         status: inv.status,
         createdAt: inv.createdAt,
+        // Whether somebody has started reviewing this one and stopped part way.
+        // The timestamp rather than the draft itself: the list wants to say "you
+        // were here", not carry every line of every unfinished review.
+        startedAt: inv.draftUpdatedAt,
       }))
     );
   } catch (err) {
@@ -133,7 +150,17 @@ export const getInvoice = async (req: Request, res: Response) => {
 
     const invoice = await req.prisma.invoice.findUnique({
       where: { id },
-      include: { supplier: true },
+      // Selected for the same reason as the list above: the reading and the
+      // draft live on this row now, and nothing here needs either of them.
+      select: {
+        id: true,
+        originalName: true,
+        storedPath: true,
+        mimeType: true,
+        status: true,
+        createdAt: true,
+        supplier: { select: { id: true, name: true } },
+      },
     });
 
     if (!invoice) {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, ChevronRight, FileText, Upload } from 'lucide-react';
+import { CheckCircle2, ChevronRight, FileText, History, Upload } from 'lucide-react';
 import { errorMessage, getInvoices, type InvoiceSummary } from '../services/api';
 import { formatDateRelative } from '../lib/format';
 import { Button, Card, EmptyBlock, ErrorBlock, LoadingBlock } from '../components/ui';
@@ -139,16 +139,28 @@ function InvoiceRow({
                 <span className="block text-sm text-slate-500 truncate">
                     {formatDateRelative(invoice.createdAt)} · {invoice.originalName}
                 </span>
+                {!applied && invoice.startedAt && (
+                    <span className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-blue-800 bg-blue-50 px-2 py-0.5 rounded-full">
+                        <History size={12} aria-hidden="true" />
+                        {t('invoice.list.startedAt', {
+                            when: formatDateRelative(invoice.startedAt),
+                        })}
+                    </span>
+                )}
             </span>
             {applied ? (
                 <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-full">
-                    <CheckCircle2 size={15} />
+                    <CheckCircle2 size={15} aria-hidden="true" />
                     {t('invoice.list.recorded')}
                 </span>
             ) : (
                 <span className="shrink-0 inline-flex items-center gap-1 text-sm font-semibold text-blue-700">
-                    {t('invoice.list.review')}
-                    <ChevronRight size={17} />
+                    {/* An invoice somebody started and left says so, because the
+                        difference between "this is untouched" and "your work is
+                        still in there" is the difference between dreading the tap
+                        and taking it. */}
+                    {invoice.startedAt ? t('invoice.list.continue') : t('invoice.list.review')}
+                    <ChevronRight size={17} aria-hidden="true" />
                 </span>
             )}
         </>

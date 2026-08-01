@@ -76,11 +76,11 @@ describe('tPlural', () => {
 describe('pluralKey', () => {
     it('picks the form t would, so <T> can build the same sentence from elements', () => {
         setLang('en');
-        expect(pluralKey('invoice.review.selected', 1)).toBe(
-            'invoice.review.selected_one'
+        expect(pluralKey('invoice.review.willApply', 1)).toBe(
+            'invoice.review.willApply_one'
         );
-        expect(pluralKey('invoice.review.selected', 4)).toBe(
-            'invoice.review.selected_other'
+        expect(pluralKey('invoice.review.willApply', 4)).toBe(
+            'invoice.review.willApply_other'
         );
     });
 });

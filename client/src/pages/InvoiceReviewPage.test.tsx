@@ -1,60 +1,44 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ParsedInvoiceResponse } from '../services/api';
 import { setLang } from '../i18n/locale';
 
 /**
- * The behaviour this screen is judged on: opening an invoice that has been
- * opened before must not cost another reading, and must not cost the reviewer
- * the corrections they already made.
+ * The promises this screen makes, checked from the outside.
  *
- * Both are only visible from the outside - the page either issues a parse or it
- * does not, and either shows the reviewer's numbers or the document's - so they
- * are checked here rather than against the pieces underneath.
+ * Two are about not wasting anyone's time: an invoice read once is not read
+ * again, and corrections survive leaving the screen. The rest are about the
+ * review itself being possible to get through - lines stay closed until opened,
+ * every line that still wants a decision is counted and reachable, and Apply
+ * refuses until none are left rather than failing afterwards.
  */
 
 const getInvoiceReview = vi.fn();
 const parseInvoice = vi.fn();
 const saveInvoiceDraft = vi.fn();
 const applyInvoice = vi.fn();
+const getProducts = vi.fn();
 
 vi.mock('../services/api', () => ({
     getInvoiceReview: (...args: unknown[]) => getInvoiceReview(...args),
     parseInvoice: (...args: unknown[]) => parseInvoice(...args),
     saveInvoiceDraft: (...args: unknown[]) => saveInvoiceDraft(...args),
     applyInvoice: (...args: unknown[]) => applyInvoice(...args),
+    getProducts: (...args: unknown[]) => getProducts(...args),
+    getProductByBarcode: vi.fn(),
+    createProduct: vi.fn(),
     errorMessage: (_err: unknown, fallback: string) => fallback,
+    ApiError: class ApiError extends Error {},
 }));
 
 vi.mock('sonner', () => ({
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
 
-// Stubbed to its inputs and its one output. The real line component pulls in the
-// camera stack, and none of that is what these tests are about.
-vi.mock('../components/InvoiceLineItem', () => ({
-    default: ({
-        line,
-        index,
-        onChange,
-    }: {
-        line: { description: string; quantity: number | null };
-        index: number;
-        onChange: (index: number, updates: { quantity: number | null }) => void;
-    }) => (
-        <div>
-            <span>{line.description}</span>
-            <input
-                aria-label={`quantity ${index}`}
-                value={line.quantity ?? ''}
-                onChange={(event) =>
-                    onChange(index, { quantity: Number(event.target.value) })
-                }
-            />
-        </div>
-    ),
-}));
+// The only stub. It reaches for a camera, which jsdom does not have, and no test
+// here is about scanning.
+vi.mock('../components/BarcodeScanner', () => ({ default: () => null }));
 
 const { default: InvoiceReviewPage } = await import('./InvoiceReviewPage');
 
@@ -82,8 +66,42 @@ const READING: ParsedInvoiceResponse = {
             matchScore: 0,
             priceMismatch: false,
         },
+        {
+            lineNo: 2,
+            code: null,
+            description: 'ÇAY 500G',
+            barcode: null,
+            quantity: 12,
+            unit: 'ADET',
+            unitPrice: 42.5,
+            totalPrice: 510,
+            matchedProductId: null,
+            matchedProductName: null,
+            matchedBrand: null,
+            matchScore: 0,
+            priceMismatch: false,
+        },
     ],
 };
+
+/** A line the reviewer has already settled: product chosen, numbers usable. */
+const settledLine = (over: Record<string, unknown> = {}) => ({
+    uid: 'line-1',
+    apply: true,
+    productId: 3,
+    matchedProductName: 'Baklava Kabı 500gr',
+    quantity: 400,
+    unitPrice: 2.42,
+    applyStock: true,
+    applyPrice: true,
+    parsedLineNo: 1,
+    name: 'BAKLAVA KABI 500GR',
+    description: 'BAKLAVA KABI 500GR',
+    brand: null,
+    barcode: null,
+    code: null,
+    ...over,
+});
 
 const openReviewScreen = () =>
     render(
@@ -94,10 +112,15 @@ const openReviewScreen = () =>
         </MemoryRouter>
     );
 
+const rowToggle = (title: string) =>
+    screen.getByRole('button', { expanded: false, name: new RegExp(title, 'i') });
+
 beforeEach(() => {
     setLang('en');
     vi.clearAllMocks();
+    localStorage.clear();
     saveInvoiceDraft.mockResolvedValue({ lines: [], updatedAt: '' });
+    getProducts.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -121,9 +144,8 @@ describe('opening an invoice for review', () => {
     });
 
     it('does not read it again when it has been read before', async () => {
-        // The whole point. Before the reading was stored, coming back to this
-        // screen meant waiting out another model call for an answer that could
-        // not have changed.
+        // Before the reading was stored, coming back to this screen meant waiting
+        // out another model call for an answer that could not have changed.
         getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
 
         openReviewScreen();
@@ -135,34 +157,17 @@ describe('opening an invoice for review', () => {
     it('brings back the corrections rather than the document', async () => {
         getInvoiceReview.mockResolvedValue({
             parsed: READING,
+            // The reviewer counted 399, whatever the invoice says.
             draft: {
                 updatedAt: '2026-07-31T10:05:00.000Z',
-                lines: [
-                    {
-                        apply: true,
-                        productId: 3,
-                        // The reviewer counted 399, whatever the invoice says.
-                        quantity: 399,
-                        unitPrice: 2.42,
-                        applyStock: true,
-                        applyPrice: true,
-                        parsedLineNo: 1,
-                        name: 'BAKLAVA KABI 500GR',
-                        description: 'BAKLAVA KABI 500GR',
-                        brand: null,
-                        barcode: null,
-                        code: null,
-                    },
-                ],
+                lines: [settledLine({ quantity: 399 })],
             },
         });
 
         openReviewScreen();
 
-        const quantity = (await screen.findByLabelText(
-            'quantity 0'
-        )) as HTMLInputElement;
-        expect(quantity.value).toBe('399');
+        await screen.findByText('BAKLAVA KABI 500GR');
+        expect(screen.getByText(/399/)).toBeDefined();
         expect(parseInvoice).not.toHaveBeenCalled();
         expect(screen.getByText('Changes restored')).toBeDefined();
     });
@@ -175,31 +180,176 @@ describe('opening an invoice for review', () => {
 
         openReviewScreen();
 
-        const quantity = (await screen.findByLabelText(
-            'quantity 0'
-        )) as HTMLInputElement;
-        expect(quantity.value).toBe('400');
+        await screen.findByText('BAKLAVA KABI 500GR');
+        expect(screen.getByText(/400/)).toBeDefined();
         expect(screen.queryByText('Changes restored')).toBeNull();
+    });
+});
+
+describe('getting through the lines', () => {
+    it('starts with every line closed', async () => {
+        // The screen used to render every field of every line at once. Closed
+        // rows are the whole reason it is now possible to see how much is left.
+        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(2);
+        expect(screen.queryByRole('button', { expanded: true })).toBeNull();
+        // Nothing to type into until a row is opened.
+        expect(screen.queryByLabelText(/How many came in/i)).toBeNull();
+    });
+
+    it('opens one line at a time', async () => {
+        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+        expect(screen.getByLabelText(/How many came in/i)).toBeDefined();
+
+        fireEvent.click(rowToggle('ÇAY 500G'));
+        // The first has closed rather than both standing open.
+        expect(screen.getAllByRole('button', { expanded: true })).toHaveLength(1);
+    });
+
+    it('will not apply while a line still needs a product, and says which', async () => {
+        // Nothing is auto-matched, so a freshly read invoice needs a product on
+        // every line. That used to surface as a toast after pressing Apply,
+        // naming a count and no lines.
+        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+            'disabled',
+            true
+        );
+        expect(screen.getByText('2 lines still need you')).toBeDefined();
+        expect(applyInvoice).not.toHaveBeenCalled();
+    });
+
+    it('narrows to just the lines that still need a decision', async () => {
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [
+                    settledLine(),
+                    settledLine({
+                        uid: 'line-2',
+                        productId: null,
+                        matchedProductName: null,
+                        name: 'ÇAY 500G',
+                    }),
+                ],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        const filters = screen.getByRole('group', { name: /Show which lines/i });
+        fireEvent.click(within(filters).getByRole('button', { name: /Needs you/i }));
+
+        // Scoped to the lines section: the "How this works" card is a list too.
+        const list = within(
+            screen.getByRole('region', { name: /Invoice lines/i })
+        ).getByRole('list');
+        expect(within(list).queryByText('BAKLAVA KABI 500GR')).toBeNull();
+        expect(within(list).getByText('ÇAY 500G')).toBeDefined();
+    });
+
+    it('lets a line be left out instead of resolved, and that unblocks Apply', async () => {
+        // The escape hatch for a line nobody can settle tonight: leaving it out
+        // must count as dealing with it.
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [
+                    settledLine(),
+                    settledLine({
+                        uid: 'line-2',
+                        productId: null,
+                        matchedProductName: null,
+                        name: 'ÇAY 500G',
+                    }),
+                ],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('ÇAY 500G');
+
+        expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+            'disabled',
+            true
+        );
+
+        fireEvent.click(screen.getByLabelText(/Include ÇAY 500G/i));
+
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+                'disabled',
+                false
+            )
+        );
+        // Asserted on the whole summary because <T> renders the count as its own
+        // element, so the sentence is split across nodes in the DOM.
+        expect(document.getElementById('apply-summary')?.textContent).toBe(
+            '1 line will be applied'
+        );
+    });
+
+    it('tracks how much of the invoice is settled', async () => {
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [
+                    settledLine(),
+                    settledLine({
+                        uid: 'line-2',
+                        productId: null,
+                        matchedProductName: null,
+                        name: 'ÇAY 500G',
+                    }),
+                ],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('ÇAY 500G');
+
+        expect(screen.getByText('1 of 2 settled')).toBeDefined();
+        expect(screen.getByRole('progressbar')).toHaveProperty('ariaValueNow', '1');
     });
 });
 
 describe('working on the review', () => {
     it('stores a correction against the reading it was made from', async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
-        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: { updatedAt: '2026-07-31T10:05:00.000Z', lines: [settledLine()] },
+        });
 
         openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
 
-        const quantity = (await screen.findByLabelText(
-            'quantity 0'
-        )) as HTMLInputElement;
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+        const quantity = screen.getByLabelText(/How many came in/i);
 
         await act(async () => {
             fireEvent.change(quantity, { target: { value: '399' } });
         });
 
-        // Nothing should have been sent yet - the debounce is what keeps a burst
-        // of typing down to one request.
+        // Nothing sent yet - the debounce is what keeps a burst of typing down to
+        // one request.
         expect(saveInvoiceDraft).not.toHaveBeenCalled();
 
         await act(async () => {
@@ -223,10 +373,29 @@ describe('working on the review', () => {
         openReviewScreen();
         await screen.findByText('BAKLAVA KABI 500GR');
 
+        // Opening a line to read it is not editing it.
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+
         await act(async () => {
             vi.advanceTimersByTime(3000);
         });
 
         expect(saveInvoiceDraft).not.toHaveBeenCalled();
+    });
+
+    it('spells out what applying a line will do to the shop', async () => {
+        // "Update stock" names a setting; "Add 400 to what you have on the shelf"
+        // names the consequence, which is the thing being decided.
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: { updatedAt: '2026-07-31T10:05:00.000Z', lines: [settledLine()] },
+        });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+
+        expect(screen.getByText(/Add 400 to what you have on the shelf/i)).toBeDefined();
+        expect(screen.getByText(/Record .* as the new cost of one/i)).toBeDefined();
     });
 });

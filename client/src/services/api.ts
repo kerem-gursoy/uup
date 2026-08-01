@@ -489,6 +489,8 @@ export interface InvoiceSummary {
     mimeType: string;
     status: string;
     createdAt: string;
+    /** When somebody last worked on this review and stopped, if they did. */
+    startedAt: string | null;
 }
 
 /** Newest first. Anything not yet APPLIED is still waiting to be reviewed. */

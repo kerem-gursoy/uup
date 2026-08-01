@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { UploadCloud, FileText, AlertCircle, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Camera, FileText, Loader2, Plus, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage, getSuppliers, uploadInvoice, type Supplier } from '../services/api';
 import { formatFileSize, compareNames } from '../lib/format';
-import { Button, Card, Field, Select } from '../components/ui';
+import { Button, Card, EmptyBlock, Field, Section, Select } from '../components/ui';
 import { useT } from '../i18n';
 
 /**
@@ -13,6 +13,12 @@ import { useT } from '../i18n';
  * On success this goes straight to the review screen - there is no confirmation
  * step in between, because the upload is not the point: reading the lines off the
  * invoice is, and stopping to say "uploaded" would just be a tap in the way.
+ *
+ * What this screen is really for is the photo. Everything after it is a
+ * consequence of that photo: a sharp, flat, complete one comes back as lines
+ * needing a glance, and a dim angled one comes back as an evening of typing. So
+ * the guidance sits next to the button rather than being left for people to
+ * infer from a bad first attempt.
  */
 export default function InvoiceUploadPage() {
     const t = useT();
@@ -22,6 +28,7 @@ export default function InvoiceUploadPage() {
     const [loadingSuppliers, setLoadingSuppliers] = useState(true);
     const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
     const [file, setFile] = useState<File | null>(null);
+    const [preview, setPreview] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
 
     useEffect(() => {
@@ -43,6 +50,19 @@ export default function InvoiceUploadPage() {
             cancelled = true;
         };
     }, [t]);
+
+    // An object URL holds the file in memory until it is handed back.
+    useEffect(() => {
+        if (!file) return;
+
+        const url = URL.createObjectURL(file);
+        setPreview(url);
+
+        return () => {
+            URL.revokeObjectURL(url);
+            setPreview(null);
+        };
+    }, [file]);
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const selected = event.target.files?.[0];
@@ -81,14 +101,35 @@ export default function InvoiceUploadPage() {
 
     const canUpload = selectedSupplierId !== null && file !== null && !uploading;
 
-    return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold text-slate-900">{t('invoice.upload.title')}</h1>
-                <p className="text-slate-500 mt-0.5">{t('invoice.upload.subtitle')}</p>
+    // Nothing here works without one, and a shop on its first day has none. An
+    // empty dropdown is a dead end that explains nothing.
+    if (!loadingSuppliers && suppliers.length === 0) {
+        return (
+            <div className="space-y-6">
+                <PageHeading />
+                <Card>
+                    <EmptyBlock
+                        icon={<FileText size={26} />}
+                        title={t('invoice.upload.noSuppliers')}
+                        description={t('invoice.upload.noSuppliersHint')}
+                        action={
+                            <Link to="/suppliers">
+                                <Button icon={<Plus size={20} />}>
+                                    {t('invoice.upload.addSupplier')}
+                                </Button>
+                            </Link>
+                        }
+                    />
+                </Card>
             </div>
+        );
+    }
 
-            <Card className="p-5 space-y-5">
+    return (
+        <div className="space-y-5">
+            <PageHeading />
+
+            <Section title={t('invoice.upload.step1')} hint={t('invoice.upload.step1Hint')}>
                 <Field label={t('invoice.upload.supplier')} htmlFor="supplier">
                     {loadingSuppliers ? (
                         <div className="flex items-center gap-2 py-3 text-slate-500">
@@ -119,27 +160,64 @@ export default function InvoiceUploadPage() {
                         </Select>
                     )}
                 </Field>
+            </Section>
 
-                <Field label={t('invoice.upload.photo')} htmlFor="file">
+            <Section title={t('invoice.upload.step2')} hint={t('invoice.upload.step2Hint')}>
+                <label
+                    htmlFor="file"
+                    className="flex flex-col items-center justify-center gap-2 w-full min-h-[128px] rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 text-slate-600 cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 focus-within:border-blue-600 focus-within:ring-4 focus-within:ring-blue-100 transition p-4 text-center"
+                >
+                    {/* Inside the label and only visually hidden, never
+                        display:none - it keeps its place in the tab order, and
+                        focus on it is what lights the whole area up. */}
                     <input
                         id="file"
                         type="file"
                         accept="image/*"
                         onChange={handleFileChange}
                         disabled={uploading}
-                        className="w-full min-h-[52px] px-4 py-3 rounded-xl border border-slate-300 bg-white outline-none transition-colors focus:border-blue-600 focus:ring-4 focus:ring-blue-100 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                        className="sr-only"
                     />
-                    {file && (
-                        <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
-                            <FileText size={16} className="shrink-0" />
-                            <span className="truncate">{file.name}</span>
-                            <span className="text-slate-400 shrink-0">
-                                ({formatFileSize(file.size)})
-                            </span>
-                        </div>
-                    )}
-                </Field>
+                    <Camera size={28} aria-hidden="true" className="text-slate-400" />
+                    <span className="font-medium">
+                        {file
+                            ? t('invoice.upload.changePhoto')
+                            : t('invoice.upload.choosePhoto')}
+                    </span>
+                    <span className="text-sm text-slate-500">
+                        {t('invoice.upload.choosePhotoHint')}
+                    </span>
+                </label>
 
+                {file && preview && (
+                    <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-3">
+                        {/* Shown so a blurred or half-cropped photo is caught here,
+                            rather than a minute later as nonsense line items. */}
+                        <img
+                            src={preview}
+                            alt={t('invoice.upload.previewAlt')}
+                            className="w-20 h-20 rounded-lg object-cover border border-slate-200"
+                        />
+                        <div className="min-w-0">
+                            <p className="font-medium text-slate-900 truncate">{file.name}</p>
+                            <p className="text-sm text-slate-500">{formatFileSize(file.size)}</p>
+                        </div>
+                    </div>
+                )}
+
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                    <p className="font-medium text-slate-800 text-sm">
+                        {t('invoice.upload.tipsTitle')}
+                    </p>
+                    <ul className="mt-1.5 space-y-1 text-sm text-slate-600 list-disc pl-5">
+                        <li>{t('invoice.upload.tipFlat')}</li>
+                        <li>{t('invoice.upload.tipWhole')}</li>
+                        <li>{t('invoice.upload.tipLight')}</li>
+                    </ul>
+                </div>
+            </Section>
+
+            <div className="space-y-2">
                 <Button
                     onClick={handleUpload}
                     disabled={!canUpload}
@@ -149,14 +227,26 @@ export default function InvoiceUploadPage() {
                 >
                     {uploading ? t('invoice.upload.uploading') : t('invoice.upload.submit')}
                 </Button>
+                {/* Says what the button leads to rather than scolding for a form
+                    that is merely unfinished - the disabled button says that much
+                    already, and said it from the moment the page opened. */}
+                <p className="text-sm text-slate-500 text-center">
+                    {canUpload || uploading
+                        ? t('invoice.upload.whatNext')
+                        : t('invoice.upload.needBoth')}
+                </p>
+            </div>
+        </div>
+    );
+}
 
-                {!canUpload && !uploading && (
-                    <p className="flex items-start gap-2 bg-amber-50 border border-amber-200 p-3 rounded-xl text-sm text-amber-900">
-                        <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                        {t('invoice.upload.needBoth')}
-                    </p>
-                )}
-            </Card>
+function PageHeading() {
+    const t = useT();
+
+    return (
+        <div>
+            <h1 className="text-2xl font-bold text-slate-900">{t('invoice.upload.title')}</h1>
+            <p className="text-slate-500 mt-0.5">{t('invoice.upload.subtitle')}</p>
         </div>
     );
 }

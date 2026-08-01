@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, type ReactNode } from 'react';
+import { forwardRef, useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, Loader2, Minus, Plus } from 'lucide-react';
 import clsx from 'clsx';
@@ -305,6 +305,9 @@ export function EmptyBlock({
  * Deliberately inset from the edges rather than a full-bleed sheet: the screen
  * behind stays visible, so the panel reads as a step in the current task.
  */
+const FOCUSABLE =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Modal({
     title,
     onClose,
@@ -314,13 +317,65 @@ export function Modal({
     onClose: () => void;
     children: ReactNode;
 }) {
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    /**
+     * Keyboard handling for a panel that claims to be modal.
+     *
+     * Escape closes, Tab stays inside. Without the trap, `aria-modal` is a
+     * promise the panel does not keep: tabbing walks out into the page behind,
+     * which a screen reader has already been told is not there, and the next
+     * Enter presses a button nobody can see.
+     */
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') onClose();
+            if (event.key === 'Escape') {
+                onClose();
+                return;
+            }
+            if (event.key !== 'Tab' || !panelRef.current) return;
+
+            const focusable = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+                (element) => element.offsetParent !== null
+            );
+            if (focusable.length === 0) return;
+
+            const first = focusable[0]!;
+            const last = focusable[focusable.length - 1]!;
+            const active = document.activeElement;
+
+            if (event.shiftKey && (active === first || !panelRef.current.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
         };
+
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [onClose]);
+
+    /**
+     * Focus goes in on open and comes back out on close.
+     *
+     * Returning it matters more than taking it: without this, closing the panel
+     * drops focus back to the top of the document, so a keyboard user lands
+     * nowhere near the row they were working on and has to tab through the whole
+     * invoice to find their place again.
+     */
+    useEffect(() => {
+        const opener = document.activeElement as HTMLElement | null;
+
+        // Whatever the panel puts first, or the panel itself if it holds nothing
+        // focusable - never the page behind.
+        const target =
+            panelRef.current?.querySelector<HTMLElement>(FOCUSABLE) ?? panelRef.current;
+        target?.focus();
+
+        return () => opener?.focus?.();
+    }, []);
 
     // Rendered into <body>, not where it is written. A panel opened from a page
     // that is itself a <form> would otherwise nest one form inside another, which
@@ -333,9 +388,11 @@ export function Modal({
             role="presentation"
         >
             <div
+                ref={panelRef}
                 role="dialog"
                 aria-modal="true"
                 aria-label={title}
+                tabIndex={-1}
                 onClick={(event) => event.stopPropagation()}
                 // React events travel the component tree, so a submit inside the
                 // panel would reach the form of the page that opened it even
@@ -349,5 +406,55 @@ export function Modal({
             </div>
         </div>,
         document.body
+    );
+}
+
+/**
+ * Asking before something is undone.
+ *
+ * Replaces window.confirm, which looked like the browser rather than the app,
+ * could not say which thing it was about to remove in the app's own language on
+ * every platform, and froze the page while it waited. This one is a panel like
+ * any other: it names what is going, focus lands on it, and Escape backs out.
+ */
+export function ConfirmDialog({
+    title,
+    body,
+    confirmLabel,
+    destructive,
+    onConfirm,
+    onClose,
+}: {
+    title: string;
+    body?: string;
+    confirmLabel: string;
+    destructive?: boolean;
+    onConfirm: () => void;
+    onClose: () => void;
+}) {
+    const t = useT();
+
+    return (
+        <Modal title={title} onClose={onClose}>
+            {body && <p className="text-slate-600 -mt-2 mb-5">{body}</p>}
+            <div className="flex flex-col gap-2">
+                <Button
+                    onClick={() => {
+                        onConfirm();
+                        onClose();
+                    }}
+                    className={
+                        destructive
+                            ? 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
+                            : undefined
+                    }
+                >
+                    {confirmLabel}
+                </Button>
+                <Button variant="ghost" onClick={onClose}>
+                    {t('common.cancel')}
+                </Button>
+            </div>
+        </Modal>
     );
 }
