@@ -37,6 +37,7 @@ import {
     type LineItemState,
     type LineState,
 } from '../lib/invoiceReview';
+import { lineStateTokens } from '../lib/lineStateTokens';
 import { useAutosave, type AutosaveStatus } from '../hooks/useAutosave';
 import { formatDate, formatDateRelative } from '../lib/format';
 import { pluralKey, useT, useTPlural } from '../i18n';
@@ -192,6 +193,12 @@ export default function InvoiceReviewPage() {
 
     const tally = useMemo(() => tallyLines(linesState), [linesState]);
 
+    /** Every line's state in document order - what the progress bar is drawn from. */
+    const segments = useMemo(
+        () => linesState.map((line) => ({ uid: line.uid, state: lineState(line) })),
+        [linesState]
+    );
+
     const visibleLines = useMemo(
         () =>
             linesState
@@ -232,6 +239,48 @@ export default function InvoiceReviewPage() {
         if (!next) return;
         setOpenUid(next.uid);
         scrollTo.current = next.uid;
+    };
+
+    /**
+     * Deals with every outstanding line at once, by leaving them out.
+     *
+     * The one bulk action this screen can honestly offer. Nothing matches products
+     * automatically - the parser returns every line with no product on it - so
+     * there is never a pile of machine-made guesses sitting here waiting to be
+     * accepted in one tap. What there is instead, on a long invoice, is the tail:
+     * delivery charges, pallets, the two items the shop does not stock. Each one
+     * has to be unticked by hand before Apply will move, and unticking twelve
+     * things one at a time is the part of this screen that wastes the most time.
+     *
+     * It only ever declines to write. Where a bulk confirm would push a dozen
+     * guessed rows into stock and cost history on one tap, this leaves the shop's
+     * numbers exactly as they were - so it is offered quietly, and it is offered
+     * with a way back.
+     */
+    const leaveOutTheRest = () => {
+        const outstanding = linesState.filter((line) => lineState(line) === 'attention');
+        if (outstanding.length === 0) return;
+
+        // Held by uid rather than by index: undo may run after the reviewer has
+        // added or removed a line, and putting `apply` back on whatever now sits
+        // at position 4 would include a line nobody asked for.
+        const affected = new Set(outstanding.map((line) => line.uid));
+        const setApply = (apply: boolean) => (prev: LineItemState[]) =>
+            prev.map((line) => (affected.has(line.uid) ? { ...line, apply } : line));
+
+        setEdited(true);
+        setLinesState(setApply(false));
+        setOpenUid(null);
+
+        toast.success(tPlural('invoice.review.leftOutRest', outstanding.length), {
+            action: {
+                label: t('common.undo'),
+                onClick: () => {
+                    setEdited(true);
+                    setLinesState(setApply(true));
+                },
+            },
+        });
     };
 
     /**
@@ -431,13 +480,14 @@ export default function InvoiceReviewPage() {
 
                 <Progress
                     tally={tally}
-                    total={linesState.length}
+                    segments={segments}
                     filter={filter}
                     onFilter={(next) => {
                         setFilter(next);
                         setOpenUid(null);
                     }}
                     onReviewNext={reviewNext}
+                    onLeaveOutTheRest={leaveOutTheRest}
                 />
 
                 <section aria-label={t('invoice.review.linesLabel')}>
@@ -587,18 +637,22 @@ function HowThisWorks({ onDismiss }: { onDismiss: () => void }) {
  */
 function Progress({
     tally,
-    total,
+    segments,
     filter,
     onFilter,
     onReviewNext,
+    onLeaveOutTheRest,
 }: {
     tally: ReturnType<typeof tallyLines>;
-    total: number;
+    segments: { uid: string; state: LineState }[];
     filter: Filter;
     onFilter: (filter: Filter) => void;
     onReviewNext: () => void;
+    onLeaveOutTheRest: () => void;
 }) {
     const t = useT();
+    const tPlural = useTPlural();
+    const total = segments.length;
     const settled = tally.ready + tally.excluded;
 
     return (
@@ -612,18 +666,26 @@ function Progress({
                 </p>
             </div>
 
+            {/* One block per line, in document order, rather than a single filled
+                bar. Both say how much is left; only this one says where it is, so
+                a reviewer scrolling a long invoice can see that the outstanding
+                work is the last four rows and not scattered through fifty. The
+                count beside the heading carries the same figure for anyone who
+                cannot use the colours. */}
             <div
-                className="h-2 rounded-full bg-slate-100 overflow-hidden"
+                className="h-2 rounded-full bg-slate-100 overflow-hidden flex gap-px"
                 role="progressbar"
                 aria-valuenow={settled}
                 aria-valuemin={0}
                 aria-valuemax={total}
                 aria-label={t('invoice.review.progressTitle')}
             >
-                <div
-                    className="h-full bg-emerald-500 transition-all duration-300"
-                    style={{ width: total === 0 ? '0%' : `${(settled / total) * 100}%` }}
-                />
+                {segments.map(({ uid, state }) => (
+                    <span
+                        key={uid}
+                        className={clsx('flex-1 transition-colors', lineStateTokens[state].bar)}
+                    />
+                ))}
             </div>
 
             <div
@@ -662,15 +724,28 @@ function Progress({
                 />
             </div>
 
+            {/* Both ways out of a stack of outstanding lines, in the order they
+                should be reached for: settle the next one, or - once it is clear
+                the rest are never going to be settled - deal with all of them at
+                once. The second is deliberately the quieter of the two. */}
             {tally.attention > 0 && (
-                <Button
-                    variant="secondary"
-                    onClick={onReviewNext}
-                    icon={<ArrowRight size={20} />}
-                    className="w-full"
-                >
-                    {t('invoice.review.reviewNext')}
-                </Button>
+                <div className="space-y-2">
+                    <Button
+                        variant="secondary"
+                        onClick={onReviewNext}
+                        icon={<ArrowRight size={20} />}
+                        className="w-full"
+                    >
+                        {t('invoice.review.reviewNext')}
+                    </Button>
+                    <button
+                        type="button"
+                        onClick={onLeaveOutTheRest}
+                        className="w-full min-h-[44px] px-3 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
+                    >
+                        {tPlural('invoice.review.leaveOutRest', tally.attention)}
+                    </button>
+                </div>
             )}
         </section>
     );

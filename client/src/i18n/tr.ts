@@ -33,6 +33,7 @@ export const tr: Dictionary = {
     'common.optional': 'İsteğe bağlı',
     'common.decreaseByOne': 'Bir azalt',
     'common.increaseByOne': 'Bir artır',
+    'common.undo': 'Geri al',
 
     'common.and': 've',
 
@@ -287,6 +288,11 @@ export const tr: Dictionary = {
     'invoice.review.filterReady': 'Hazır',
     'invoice.review.filterExcluded': 'Dışarıda',
     'invoice.review.reviewNext': 'Sıradakine git',
+    'invoice.review.leaveOutRest_one': 'Sizi bekleyen {count} satırı dışarıda bırak',
+    'invoice.review.leaveOutRest_other': 'Sizi bekleyen {count} satırı dışarıda bırak',
+    'invoice.review.leftOutRest_one': '{count} satır dışarıda bırakıldı. Onlar için bir şey değişmeyecek.',
+    'invoice.review.leftOutRest_other':
+        '{count} satır dışarıda bırakıldı. Onlar için bir şey değişmeyecek.',
     'invoice.review.tipsTitle': 'Bu ekran nasıl çalışır',
     'invoice.review.tipCheck':
         'Aşağıdaki rakamlar fotoğraftan okundu; kâğıttakilerle karşılaştırın.',

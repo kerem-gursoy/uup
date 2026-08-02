@@ -16,7 +16,9 @@ import {
     lineState,
     type LineItemState,
     type LineProblem,
+    type LineState,
 } from '../lib/invoiceReview';
+import { lineStateTokens } from '../lib/lineStateTokens';
 import { centsToInputValue, formatMoney, parseMoneyToCents } from '../lib/format';
 import ProductPicker from './ProductPicker';
 import { Button, ConfirmDialog, Field, MoneyInput, QuantityInput } from './ui';
@@ -72,7 +74,7 @@ export default function InvoiceLineItem({
         <li id={id} className="scroll-mt-44">
             <div
                 className={clsx(
-                    'rounded-2xl border transition-colors',
+                    'rounded-2xl border transition-colors flex overflow-hidden',
                     open
                         ? 'border-blue-300 bg-white ring-4 ring-blue-50'
                         : state === 'attention'
@@ -81,6 +83,16 @@ export default function InvoiceLineItem({
                     state === 'excluded' && !open && 'bg-slate-50'
                 )}
             >
+                {/* Runs the full height of the card rather than only the closed
+                    summary, so the row still says what it is while it is being
+                    edited - which is the moment its state is changing. Decorative:
+                    the chip beside the title already says this in words. */}
+                <span
+                    aria-hidden="true"
+                    className={clsx('w-1.5 shrink-0 transition-colors', lineStateTokens[state].bar)}
+                />
+
+                <div className="flex-1 min-w-0">
                 <div className="flex items-start gap-3 p-3">
                     {/* Its own control rather than part of the row button: including
                         a line and opening it to edit are different decisions, and
@@ -142,6 +154,7 @@ export default function InvoiceLineItem({
                         />
                     )}
                 </div>
+                </div>
             </div>
         </li>
     );
@@ -187,13 +200,13 @@ function LineSummary({ line }: { line: LineItemState }) {
 }
 
 /** Never colour alone: each state carries its own icon and its own words. */
-function StateChip({ state }: { state: ReturnType<typeof lineState> }) {
+function StateChip({ state }: { state: LineState }) {
     const t = useT();
 
-    const styles = {
-        ready: { className: 'bg-emerald-50 text-emerald-800', icon: <Check size={13} /> },
-        attention: { className: 'bg-amber-100 text-amber-900', icon: <AlertTriangle size={13} /> },
-        excluded: { className: 'bg-slate-100 text-slate-600', icon: <CircleSlash size={13} /> },
+    const icon = {
+        ready: <Check size={13} />,
+        attention: <AlertTriangle size={13} />,
+        excluded: <CircleSlash size={13} />,
     }[state];
 
     const label = {
@@ -206,10 +219,10 @@ function StateChip({ state }: { state: ReturnType<typeof lineState> }) {
         <span
             className={clsx(
                 'inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold',
-                styles.className
+                lineStateTokens[state].chip
             )}
         >
-            {styles.icon}
+            {icon}
             {label}
         </span>
     );

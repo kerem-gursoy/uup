@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toast } from 'sonner';
 import type { ParsedInvoiceResponse } from '../services/api';
 import { setLang } from '../i18n/locale';
 
@@ -303,6 +304,92 @@ describe('getting through the lines', () => {
         expect(document.getElementById('apply-summary')?.textContent).toBe(
             '1 line will be applied'
         );
+    });
+
+    it('leaves out every outstanding line at once, and that unblocks Apply', async () => {
+        // The tail of a long invoice - delivery charges, pallets, things the shop
+        // does not stock - is dealt with by leaving it out, and unticking each one
+        // by hand is the slowest part of the screen.
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [
+                    settledLine(),
+                    settledLine({
+                        uid: 'line-2',
+                        productId: null,
+                        matchedProductName: null,
+                        name: 'ÇAY 500G',
+                    }),
+                ],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('ÇAY 500G');
+
+        expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+            'disabled',
+            true
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /Leave out the 1 line/i }));
+
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+                'disabled',
+                false
+            )
+        );
+        // Left out counts as settled, but it is not applied: the line the reviewer
+        // did settle is still the only one that will write anything.
+        expect(screen.getByText('2 of 2 settled')).toBeDefined();
+        expect(document.getElementById('apply-summary')?.textContent).toBe(
+            '1 line will be applied'
+        );
+    });
+
+    it('puts them back if that was not what was meant', async () => {
+        // A bulk action with no way back is one people are right to be afraid of.
+        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        fireEvent.click(screen.getByRole('button', { name: /Leave out the 2 lines/i }));
+        await waitFor(() => expect(screen.getByText('2 of 2 settled')).toBeDefined());
+
+        const undo = vi.mocked(toast.success).mock.calls.at(-1)?.[1]?.action;
+        expect(undo).toBeDefined();
+
+        await act(async () => {
+            (undo as { onClick: (event: unknown) => void }).onClick({});
+        });
+
+        expect(screen.getByText('0 of 2 settled')).toBeDefined();
+        expect(screen.getByText('2 lines still need you')).toBeDefined();
+    });
+
+    it('saves leaving lines out, the same as any other correction', async () => {
+        // It edits the review like anything else does. Were it not to count as an
+        // edit, a reviewer who did this and left would come back to find the whole
+        // tail waiting for them again.
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        fireEvent.click(screen.getByRole('button', { name: /Leave out the 2 lines/i }));
+
+        await act(async () => {
+            vi.advanceTimersByTime(1200);
+        });
+
+        await waitFor(() => expect(saveInvoiceDraft).toHaveBeenCalled());
+        const draft = saveInvoiceDraft.mock.calls.at(-1)![1];
+        expect(draft.lines.map((line: { apply: boolean }) => line.apply)).toEqual([false, false]);
     });
 
     it('tracks how much of the invoice is settled', async () => {
