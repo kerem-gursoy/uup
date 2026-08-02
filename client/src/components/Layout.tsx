@@ -13,9 +13,13 @@ export default function Layout() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20 md:pb-0">
-            {/* Top Bar */}
-            <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 shadow-sm z-50 flex items-center justify-between px-4 md:px-8">
+        <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-0">
+            {/* Top Bar. Installed on a home screen the page owns the status bar
+                too (see apple-mobile-web-app-status-bar-style in index.html), so
+                the bar keeps its 4rem row of content and grows upward by the
+                inset - white behind the clock rather than a strip of the page
+                scrolling past underneath it. */}
+            <header className="fixed top-0 left-0 right-0 h-[calc(4rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] bg-white border-b border-slate-200 shadow-sm z-50 flex items-center justify-between px-4 md:px-8">
                 <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
                         U
@@ -31,7 +35,7 @@ export default function Layout() {
             </header>
 
             {/* Main Content */}
-            <main className="pt-24 min-h-screen max-w-5xl mx-auto px-4 md:px-8 pb-6">
+            <main className="pt-[calc(6rem+env(safe-area-inset-top,0px))] min-h-screen max-w-5xl mx-auto px-4 md:px-8 pb-6">
                 <Outlet />
             </main>
 

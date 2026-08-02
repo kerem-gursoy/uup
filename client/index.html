@@ -11,8 +11,34 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the page extend into the notch and home-indicator
+         areas. Without it iOS letterboxes the app between them and env(safe-area-*)
+         reports 0, so the padding in index.css and Layout.tsx would do nothing. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>UUP — Stok</title>
+
+    <!--
+      Installed-app metadata. The manifest is what Android and current iOS read;
+      the apple-* tags below duplicate parts of it because iOS versions before
+      16.4 ignore the manifest entirely and will open the app with the Safari
+      toolbar visible unless apple-mobile-web-app-capable is present. They look
+      redundant and are not - do not remove them as duplication.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- black-translucent hands the full screen to the page, status bar included.
+         That is why the header carries safe-area-inset-top padding: without it the
+         clock would sit on top of the app name. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- The home-screen label. Left unset, iOS uses <title>, which is the longer
+         two-part name and gets truncated under the icon. -->
+    <meta name="apple-mobile-web-app-title" content="UUP" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="theme-color" content="#ffffff" />
+    <!-- The app has no dark styles. Pinning the scheme keeps iOS from darkening
+         form controls it thinks it owns, and keeps the translucent status bar's
+         clock black - on a white header, the dark-mode white clock is invisible. -->
+    <meta name="color-scheme" content="light" />
   </head>
   <body>
     <div id="root"></div>
