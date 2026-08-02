@@ -1,52 +1,79 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { UploadCloud, FileText, Check, AlertCircle, ChevronDown, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Camera, FileText, Loader2, Plus, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchSuppliers, uploadInvoice, type Supplier, type UploadInvoiceResponse } from '../services/api';
+import { errorMessage, getSuppliers, uploadInvoice, type Supplier } from '../services/api';
+import { formatFileSize, compareNames } from '../lib/format';
+import { Button, Card, EmptyBlock, Field, Section, Select } from '../components/ui';
+import { useT } from '../i18n';
 
-type Step = 'upload' | 'success';
-
+/**
+ * Registers a supplier invoice against a supplier and hands it to the parser.
+ *
+ * On success this goes straight to the review screen - there is no confirmation
+ * step in between, because the upload is not the point: reading the lines off the
+ * invoice is, and stopping to say "uploaded" would just be a tap in the way.
+ *
+ * What this screen is really for is the photo. Everything after it is a
+ * consequence of that photo: a sharp, flat, complete one comes back as lines
+ * needing a glance, and a dim angled one comes back as an evening of typing. So
+ * the guidance sits next to the button rather than being left for people to
+ * infer from a bad first attempt.
+ */
 export default function InvoiceUploadPage() {
+    const t = useT();
     const navigate = useNavigate();
 
-    // State
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [loadingSuppliers, setLoadingSuppliers] = useState(true);
     const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
     const [file, setFile] = useState<File | null>(null);
+    const [preview, setPreview] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
-    const [step, setStep] = useState<Step>('upload');
-    const [uploadResult, setUploadResult] = useState<UploadInvoiceResponse | null>(null);
 
-    // Fetch suppliers on mount
     useEffect(() => {
-        const loadSuppliers = async () => {
-            try {
-                const data = await fetchSuppliers();
-                setSuppliers(data);
-            } catch (error) {
+        let cancelled = false;
+
+        getSuppliers()
+            .then((data) => {
+                if (!cancelled) setSuppliers(data);
+            })
+            .catch((error) => {
                 console.error('Failed to fetch suppliers:', error);
-                toast.error('Failed to load suppliers. Please refresh the page.');
-            } finally {
-                setLoadingSuppliers(false);
-            }
+                if (!cancelled) toast.error(errorMessage(error, t('error.suppliersLoad')));
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingSuppliers(false);
+            });
+
+        return () => {
+            cancelled = true;
         };
+    }, [t]);
 
-        loadSuppliers();
-    }, []);
+    // An object URL holds the file in memory until it is handed back.
+    useEffect(() => {
+        if (!file) return;
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const selectedFile = e.target.files[0];
+        const url = URL.createObjectURL(file);
+        setPreview(url);
 
-            // Validate file type
-            if (!selectedFile.type.startsWith('image/')) {
-                toast.error('Please select an image file');
-                return;
-            }
+        return () => {
+            URL.revokeObjectURL(url);
+            setPreview(null);
+        };
+    }, [file]);
 
-            setFile(selectedFile);
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const selected = event.target.files?.[0];
+        if (!selected) return;
+
+        if (!selected.type.startsWith('image/')) {
+            toast.error(t('invoice.upload.notAnImage'));
+            return;
         }
+
+        setFile(selected);
     };
 
     const handleUpload = async () => {
@@ -56,189 +83,170 @@ export default function InvoiceUploadPage() {
 
         try {
             const formData = new FormData();
-            formData.append('supplierId', selectedSupplierId.toString());
+            formData.append('supplierId', String(selectedSupplierId));
             formData.append('file', file);
 
             const result = await uploadInvoice(formData);
-            console.log('Upload result:', result);
+            if (!result?.invoiceId) throw new Error('Missing invoice id in server response');
 
-            if (!result || !result.invoiceId) {
-                throw new Error('Invalid server response: Missing invoice ID');
-            }
-
-            toast.success('Invoice uploaded successfully');
+            toast.success(t('invoice.upload.done'));
             navigate(`/invoices/${result.invoiceId}/review`);
         } catch (error) {
             console.error('Upload failed:', error);
-            const message = error instanceof Error ? error.message : 'Upload failed';
-            toast.error(message);
+            toast.error(errorMessage(error, t('error.uploadFailed')));
         } finally {
             setUploading(false);
         }
     };
 
-    const handleReset = () => {
-        setSelectedSupplierId(null);
-        setFile(null);
-        setUploadResult(null);
-        setStep('upload');
-    };
-
     const canUpload = selectedSupplierId !== null && file !== null && !uploading;
 
-    if (step === 'success' && uploadResult) {
+    // Nothing here works without one, and a shop on its first day has none. An
+    // empty dropdown is a dead end that explains nothing.
+    if (!loadingSuppliers && suppliers.length === 0) {
         return (
-            <div className="space-y-6 pb-20">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Upload Invoice</h1>
-                    <p className="text-slate-500">Import stock from supplier invoices.</p>
-                </div>
-
-                <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
-                    <div className="flex items-center justify-center mb-6">
-                        <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
-                            <Check size={32} />
-                        </div>
-                    </div>
-
-                    <h2 className="text-xl font-bold text-slate-900 text-center mb-2">Invoice Uploaded</h2>
-                    <p className="text-slate-500 text-center mb-6">
-                        Invoice ID: {uploadResult.invoiceId}. Parsing and mapping will come next.
-                    </p>
-
-                    <div className="space-y-4 bg-slate-50 rounded-lg p-4">
-                        <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-slate-600">Supplier</span>
-                            <span className="text-sm text-slate-900">{uploadResult.supplier.name}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-slate-600">File</span>
-                            <span className="text-sm text-slate-900">{uploadResult.file.originalName}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-slate-600">Status</span>
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                {uploadResult.status}
-                            </span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-slate-600">Created</span>
-                            <span className="text-sm text-slate-900">
-                                {new Date(uploadResult.createdAt).toLocaleString()}
-                            </span>
-                        </div>
-                    </div>
-
-                    <div className="mt-6 grid grid-cols-2 gap-3">
-                        <button
-                            onClick={() => navigate('/')}
-                            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-3 rounded-xl transition-colors"
-                        >
-                            Back to Home
-                        </button>
-                        <button
-                            onClick={handleReset}
-                            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors"
-                        >
-                            Upload Another
-                        </button>
-                    </div>
-                </div>
+            <div className="space-y-6">
+                <PageHeading />
+                <Card>
+                    <EmptyBlock
+                        icon={<FileText size={26} />}
+                        title={t('invoice.upload.noSuppliers')}
+                        description={t('invoice.upload.noSuppliersHint')}
+                        action={
+                            <Link to="/suppliers">
+                                <Button icon={<Plus size={20} />}>
+                                    {t('invoice.upload.addSupplier')}
+                                </Button>
+                            </Link>
+                        }
+                    />
+                </Card>
             </div>
         );
     }
 
     return (
-        <div className="space-y-6 pb-20">
-            <div>
-                <h1 className="text-2xl font-bold text-slate-900">Upload Invoice</h1>
-                <p className="text-slate-500">Import stock from supplier invoices.</p>
-            </div>
+        <div className="space-y-5">
+            <PageHeading />
 
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-6">
-                {/* Supplier Selection */}
-                <div>
-                    <label htmlFor="supplier" className="block text-sm font-medium text-slate-700 mb-2">
-                        Supplier <span className="text-red-500">*</span>
-                    </label>
+            <Section title={t('invoice.upload.step1')} hint={t('invoice.upload.step1Hint')}>
+                <Field label={t('invoice.upload.supplier')} htmlFor="supplier">
                     {loadingSuppliers ? (
-                        <div className="flex items-center justify-center py-3 text-slate-500">
-                            <Loader2 size={20} className="animate-spin mr-2" />
-                            Loading suppliers...
+                        <div className="flex items-center gap-2 py-3 text-slate-500">
+                            <Loader2 size={20} className="animate-spin" />
+                            {t('invoice.upload.loadingSuppliers')}
                         </div>
                     ) : (
-                        <div className="relative">
-                            <select
-                                id="supplier"
-                                value={selectedSupplierId ?? ''}
-                                onChange={(e) => setSelectedSupplierId(e.target.value ? Number(e.target.value) : null)}
-                                className="w-full px-4 py-3 pr-10 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none"
-                                disabled={uploading}
-                            >
-                                <option value="">Select a supplier...</option>
-                                {suppliers.map((supplier) => (
+                        <Select
+                            id="supplier"
+                            value={selectedSupplierId ?? ''}
+                            onChange={(event) =>
+                                setSelectedSupplierId(
+                                    event.target.value ? Number(event.target.value) : null
+                                )
+                            }
+                            disabled={uploading}
+                        >
+                            <option value="">{t('invoice.upload.selectSupplier')}</option>
+                            {/* Sorted with the Turkish alphabet: the shop's supplier
+                                names are Turkish whatever language the labels are in. */}
+                            {[...suppliers]
+                                .sort((a, b) => compareNames(a.name, b.name))
+                                .map((supplier) => (
                                     <option key={supplier.id} value={supplier.id}>
                                         {supplier.name}
                                     </option>
                                 ))}
-                            </select>
-                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={20} />
-                        </div>
+                        </Select>
                     )}
-                </div>
+                </Field>
+            </Section>
 
-                {/* File Input */}
-                <div>
-                    <label htmlFor="file" className="block text-sm font-medium text-slate-700 mb-2">
-                        Invoice Image <span className="text-red-500">*</span>
-                    </label>
-                    <div className="relative">
-                        <input
-                            id="file"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            disabled={uploading}
-                            className="w-full px-4 py-3 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                        />
-                    </div>
-                    {file && (
-                        <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
-                            <FileText size={16} />
-                            <span>{file.name}</span>
-                            <span className="text-slate-400">({(file.size / 1024).toFixed(1)} KB)</span>
-                        </div>
-                    )}
-                </div>
-
-                {/* Upload Button */}
-                <button
-                    onClick={handleUpload}
-                    disabled={!canUpload}
-                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl shadow-lg shadow-blue-200 disabled:shadow-none transition-all active:scale-95 disabled:active:scale-100 flex items-center justify-center gap-2"
+            <Section title={t('invoice.upload.step2')} hint={t('invoice.upload.step2Hint')}>
+                <label
+                    htmlFor="file"
+                    className="flex flex-col items-center justify-center gap-2 w-full min-h-[128px] rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 text-slate-600 cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 focus-within:border-blue-600 focus-within:ring-4 focus-within:ring-blue-100 transition p-4 text-center"
                 >
-                    {uploading ? (
-                        <>
-                            <Loader2 size={20} className="animate-spin" />
-                            Uploading...
-                        </>
-                    ) : (
-                        <>
-                            <UploadCloud size={20} />
-                            Upload Invoice
-                        </>
-                    )}
-                </button>
+                    {/* Inside the label and only visually hidden, never
+                        display:none - it keeps its place in the tab order, and
+                        focus on it is what lights the whole area up. */}
+                    <input
+                        id="file"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        disabled={uploading}
+                        className="sr-only"
+                    />
+                    <Camera size={28} aria-hidden="true" className="text-slate-400" />
+                    <span className="font-medium">
+                        {file
+                            ? t('invoice.upload.changePhoto')
+                            : t('invoice.upload.choosePhoto')}
+                    </span>
+                    <span className="text-sm text-slate-500">
+                        {t('invoice.upload.choosePhotoHint')}
+                    </span>
+                </label>
 
-                {!canUpload && !uploading && (
-                    <div className="flex items-start gap-2 bg-amber-50 p-3 rounded-lg text-sm text-amber-800">
-                        <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                        <p>
-                            Please select a supplier and choose an invoice image to continue.
-                        </p>
+                {file && preview && (
+                    <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-3">
+                        {/* Shown so a blurred or half-cropped photo is caught here,
+                            rather than a minute later as nonsense line items. */}
+                        <img
+                            src={preview}
+                            alt={t('invoice.upload.previewAlt')}
+                            className="w-20 h-20 rounded-lg object-cover border border-slate-200"
+                        />
+                        <div className="min-w-0">
+                            <p className="font-medium text-slate-900 truncate">{file.name}</p>
+                            <p className="text-sm text-slate-500">{formatFileSize(file.size)}</p>
+                        </div>
                     </div>
                 )}
+
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                    <p className="font-medium text-slate-800 text-sm">
+                        {t('invoice.upload.tipsTitle')}
+                    </p>
+                    <ul className="mt-1.5 space-y-1 text-sm text-slate-600 list-disc pl-5">
+                        <li>{t('invoice.upload.tipFlat')}</li>
+                        <li>{t('invoice.upload.tipWhole')}</li>
+                        <li>{t('invoice.upload.tipLight')}</li>
+                    </ul>
+                </div>
+            </Section>
+
+            <div className="space-y-2">
+                <Button
+                    onClick={handleUpload}
+                    disabled={!canUpload}
+                    busy={uploading}
+                    icon={<UploadCloud size={20} />}
+                    className="w-full"
+                >
+                    {uploading ? t('invoice.upload.uploading') : t('invoice.upload.submit')}
+                </Button>
+                {/* Says what the button leads to rather than scolding for a form
+                    that is merely unfinished - the disabled button says that much
+                    already, and said it from the moment the page opened. */}
+                <p className="text-sm text-slate-500 text-center">
+                    {canUpload || uploading
+                        ? t('invoice.upload.whatNext')
+                        : t('invoice.upload.needBoth')}
+                </p>
             </div>
+        </div>
+    );
+}
+
+function PageHeading() {
+    const t = useT();
+
+    return (
+        <div>
+            <h1 className="text-2xl font-bold text-slate-900">{t('invoice.upload.title')}</h1>
+            <p className="text-slate-500 mt-0.5">{t('invoice.upload.subtitle')}</p>
         </div>
     );
 }

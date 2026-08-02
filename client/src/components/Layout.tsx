@@ -1,8 +1,10 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { Home, Package, ScanLine, FileText, Settings, User } from 'lucide-react';
 import clsx from 'clsx';
+import { useT } from '../i18n';
 
 export default function Layout() {
+    const t = useT();
     const location = useLocation();
     const isLoginPage = location.pathname === '/login';
 
@@ -18,7 +20,10 @@ export default function Layout() {
                     <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
                         U
                     </div>
-                    <h1 className="text-lg font-bold text-slate-900">UUP</h1>
+                    {/* The app name is a label, not the page's heading - each page
+                        supplies its own h1, and two per document breaks the
+                        outline a screen reader navigates by. */}
+                    <span className="text-lg font-bold text-slate-900">UUP</span>
                 </div>
                 <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
                     <User size={20} />
@@ -33,11 +38,11 @@ export default function Layout() {
             {/* Bottom Navigation (Mobile) */}
             <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 md:hidden z-50 safe-area-bottom">
                 <div className="flex justify-around items-center h-16">
-                    <NavItem to="/" icon={<Home size={24} />} label="Home" />
-                    <NavItem to="/products" icon={<Package size={24} />} label="Products" />
-                    <NavItem to="/scan" icon={<ScanLine size={24} />} label="Scan" />
-                    <NavItem to="/invoices/upload" icon={<FileText size={24} />} label="Invoices" />
-                    <NavItem to="/settings" icon={<Settings size={24} />} label="Settings" />
+                    <NavItem to="/" icon={<Home size={24} />} label={t('nav.home')} />
+                    <NavItem to="/products" icon={<Package size={24} />} label={t('nav.products')} />
+                    <NavItem to="/scan" icon={<ScanLine size={24} />} label={t('nav.scan')} />
+                    <NavItem to="/invoices" icon={<FileText size={24} />} label={t('nav.invoices')} />
+                    <NavItem to="/settings" icon={<Settings size={24} />} label={t('nav.settings')} />
                 </div>
             </nav>
         </div>

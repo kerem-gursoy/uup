@@ -1,10 +1,18 @@
 <!doctype html>
-<html lang="en">
+<!--
+  The lang attribute and the title below are both replaced from JavaScript before
+  the first paint - see src/i18n/locale.ts and applyDocumentLanguage() in
+  src/main.tsx. This file is served byte-for-byte from the CDN and cannot know
+  which of the two languages the reader chose, so the values here are only what
+  shows while the bundle is still loading. Please do not "fix" them to match one
+  language; change the dictionaries instead.
+-->
+<html lang="tr">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>client</title>
+    <title>UUP — Stok</title>
   </head>
   <body>
     <div id="root"></div>

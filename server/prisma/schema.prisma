@@ -1,5 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Required to talk to D1 through @prisma/adapter-d1. D1 is SQLite, so the
+  // datasource provider and every model below stay exactly as they are.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -20,7 +23,11 @@ model Product {
 
 model Supplier {
   id        Int       @id @default(autoincrement())
+  /// As the user typed it, tidied of stray whitespace. This is what gets shown.
   name      String
+  /// Case- and spacing-insensitive form of `name`. Unique, so the same supplier
+  /// cannot be entered twice as "Acme", "ACME" and "acme".
+  nameKey   String    @unique
   products  Product[]
   invoices  Invoice[]
 }
@@ -35,17 +42,40 @@ model Invoice {
   mimeType     String
   status       String    @default("UPLOADED")
   createdAt    DateTime  @default(now())
+
+  /// What the model read off the document, as JSON - see services/invoiceReview.ts
+  /// for the shape. Kept because the document is immutable and the reading is
+  /// slow and paid for: re-deriving it every time the review screen opens is a
+  /// second Gemini call for an answer we already have.
+  parsedJson     String?
+  parsedAt       DateTime?
+
+  /// The reviewer's unfinished work on the review screen, so closing the app
+  /// mid-invoice is not the same as throwing the work away. Opaque JSON on
+  /// purpose - it is that screen's own state, and the server has no business
+  /// having an opinion about it beyond the guards in services/invoiceReview.ts.
+  ///
+  /// Always belongs to the reading in `parsedJson`: a re-read clears it, because
+  /// its line positions would no longer refer to anything.
+  draftJson      String?
+  draftUpdatedAt DateTime?
 }
 
+/// One dated price entry for a product.
+/// `kind` is "COST" (what we pay the supplier) or "SELL" (what we charge the
+/// customer). Both are kept as history rather than a single current value, so
+/// the business can always answer "what did this cost us back then?".
 model PriceHistory {
   id           Int      @id @default(autoincrement())
   productId    Int
   product      Product   @relation(fields: [productId], references: [id])
+  kind         String
   priceCents   Int
+  note         String?
   effectiveFrom DateTime @default(now())
 
-  @@unique([productId, effectiveFrom])
-  @@index([productId, effectiveFrom])
+  @@unique([productId, kind, effectiveFrom])
+  @@index([productId, kind, effectiveFrom])
 }
 
 model StockMovement {

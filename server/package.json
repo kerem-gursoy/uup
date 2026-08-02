@@ -2,36 +2,34 @@
   "type": "module",
   "dependencies": {
     "@google/genai": "^1.30.0",
-    "@prisma/adapter-better-sqlite3": "^7.0.1",
+    "@prisma/adapter-d1": "6.19.0",
     "@prisma/client": "6.19.0",
-    "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.4.6",
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.5",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node build/index.js",
-    "prisma:dev": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "dev": "wrangler dev --config ../wrangler.jsonc",
+    "typecheck": "tsc --noEmit",
+    "build": "wrangler deploy --config ../wrangler.jsonc --dry-run",
+    "client:build": "npm --prefix ../client run build",
+    "deploy": "npm run client:build && wrangler deploy --config ../wrangler.jsonc",
+    "types": "wrangler types --config ../wrangler.jsonc --include-runtime=false",
+    "db:migrate:local": "wrangler d1 migrations apply uup-db --local --config ../wrangler.jsonc",
+    "db:migrate:remote": "wrangler d1 migrations apply uup-db --remote --config ../wrangler.jsonc",
+    "user:admin": "tsx scripts/admin-user.ts"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/better-sqlite3": "^7.6.13",
+    "@cloudflare/workers-types": "^5.20260730.1",
     "@types/cookie-parser": "^1.4.10",
-    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.10.1",
-    "dotenv": "^17.2.3",
     "prisma": "^6.19.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.116.0"
   }
 }

@@ -1,143 +1,261 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, Plus, PackageOpen, Loader2 } from 'lucide-react';
-import { getProducts, type Product } from '../services/api';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { PackageOpen, Plus, Search, X } from 'lucide-react';
+import {
+    errorMessage,
+    getProducts,
+    type ProductFilter,
+    type ProductWithNumbers,
+} from '../services/api';
+
+import { useDebounce } from '../hooks/useDebounce';
+import { formatMoneyOrBlank } from '../lib/format';
+import { Button, Card, ErrorBlock, EmptyBlock, LoadingBlock, TextInput } from '../components/ui';
+import StockPill from '../components/StockPill';
+import { useT, useTPlural, type t as translate } from '../i18n';
+import { T } from '../i18n/T';
+
+const PRODUCT_FILTERS = ['low', 'no-price', 'cost-rose', 'below-cost'] as const;
+
+/**
+ * Wording for each subset the home screen can send the user here with.
+ *
+ * Written as a switch rather than a `filter.${key}.title` template, because the
+ * template would need a cast to TranslationKey and that cast is precisely what
+ * stops the compiler noticing a key that does not exist.
+ *
+ * `inline` is the form that reads inside "Showing only …". It is written out as
+ * its own phrase rather than lowercasing `title` at runtime: Turkish has no safe
+ * locale-less case fold - "İade".toLowerCase() grows a combining dot - and the two
+ * languages want different wording here anyway.
+ */
+function filterCopy(
+    filter: ProductFilter,
+    t: typeof translate
+): { title: string; inline: string; empty: string } {
+    switch (filter) {
+        case 'low':
+            return {
+                title: t('filter.low.title'),
+                inline: t('filter.low.inline'),
+                empty: t('filter.low.empty'),
+            };
+        case 'no-price':
+            return {
+                title: t('filter.noPrice.title'),
+                inline: t('filter.noPrice.inline'),
+                empty: t('filter.noPrice.empty'),
+            };
+        case 'cost-rose':
+            return {
+                title: t('filter.costRose.title'),
+                inline: t('filter.costRose.inline'),
+                empty: t('filter.costRose.empty'),
+            };
+        case 'below-cost':
+            return {
+                title: t('filter.belowCost.title'),
+                inline: t('filter.belowCost.inline'),
+                empty: t('filter.belowCost.empty'),
+            };
+    }
+}
 
 export default function ProductListPage() {
+    const t = useT();
+    const tPlural = useTPlural();
     const navigate = useNavigate();
-    const [products, setProducts] = useState<Product[]>([]);
+
+    const [products, setProducts] = useState<ProductWithNumbers[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const debouncedSearch = useDebounce(searchQuery, 300);
 
-    // Debounce search input
+    // Arrived from a count on the home screen: show exactly those products, and
+    // say so, so the shorter list is never mistaken for the whole catalogue.
+    const [searchParams, setSearchParams] = useSearchParams();
+    const filterParam = searchParams.get('filter');
+    const filter = PRODUCT_FILTERS.includes(filterParam as ProductFilter)
+        ? (filterParam as ProductFilter)
+        : null;
+    const copy = filter ? filterCopy(filter, t) : null;
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            setProducts(
+                await getProducts({
+                    ...(debouncedSearch ? { search: debouncedSearch } : {}),
+                    ...(filter ? { filter } : {}),
+                })
+            );
+        } catch (err) {
+            setError(errorMessage(err, t('error.productsLoad')));
+        } finally {
+            setLoading(false);
+        }
+    }, [debouncedSearch, filter, t]);
+
     useEffect(() => {
-        const timer = setTimeout(() => {
-            setDebouncedSearch(searchQuery);
-        }, 300);
-
-        return () => clearTimeout(timer);
-    }, [searchQuery]);
-
-    // Fetch products when debounced search changes
-    useEffect(() => {
-        const fetchProducts = async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const data = await getProducts(debouncedSearch ? { search: debouncedSearch } : undefined);
-                setProducts(data);
-            } catch (err) {
-                console.error('Failed to fetch products:', err);
-                setError('Failed to load products');
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchProducts();
-    }, [debouncedSearch]);
+        load();
+    }, [load]);
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Products</h1>
-                    <p className="text-slate-500 text-sm">
-                        {loading ? 'Loading...' : `${products.length} items`}
+        <div className="space-y-5">
+            <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                    <h1 className="text-2xl font-bold text-slate-900">
+                        {copy ? copy.title : t('product.list.title')}
+                    </h1>
+                    <p className="text-slate-500 text-sm mt-0.5">
+                        {loading
+                            ? t('common.loading')
+                            : tPlural('count.product', products.length)}
                     </p>
                 </div>
-                <button
-                    onClick={() => { }} // TODO: Add product creation
-                    className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg transition-colors"
-                >
-                    <Plus size={24} />
-                </button>
+                <Button onClick={() => navigate('/products/new')} icon={<Plus size={20} />}>
+                    {t('product.list.add')}
+                </Button>
             </div>
 
-            {/* Search */}
+            {/* Makes the narrowed list obvious, and one tap gets out of it. */}
+            {copy && (
+                <button
+                    type="button"
+                    onClick={() => setSearchParams({}, { replace: true })}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 hover:bg-blue-100 transition-colors min-h-[52px]"
+                >
+                    <span className="text-left">
+                        <T
+                            k="product.list.showingOnly"
+                            values={{ filter: <strong>{copy.inline}</strong> }}
+                        />
+                    </span>
+                    <span className="flex items-center gap-1 font-semibold shrink-0">
+                        {t('product.list.showAll')}
+                        <X size={17} />
+                    </span>
+                </button>
+            )}
+
             <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                <input
-                    type="text"
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                <TextInput
+                    type="search"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search by name, barcode, or brand..."
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-sm"
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder={t('product.list.searchPlaceholder')}
+                    aria-label={t('product.list.searchLabel')}
+                    className="pl-12"
                 />
             </div>
 
-            {/* Product List */}
-            <div className="space-y-3">
-                {loading ? (
-                    <div className="py-12 flex items-center justify-center text-slate-500">
-                        <Loader2 size={24} className="animate-spin mr-2" />
-                        Loading products...
-                    </div>
-                ) : error ? (
-                    <div className="text-center py-12 bg-white rounded-xl border border-slate-100">
-                        <p className="text-red-600 mb-2">{error}</p>
-                        <button
-                            onClick={() => window.location.reload()}
-                            className="text-sm text-blue-600 hover:text-blue-700"
-                        >
-                            Retry
-                        </button>
-                    </div>
-                ) : products.length > 0 ? (
-                    products.map((product) => (
-                        <ProductCard key={product.id} product={product} onClick={() => navigate(`/products/${product.id}`)} />
-                    ))
-                ) : (
-                    <div className="text-center py-12 bg-white rounded-xl border border-slate-100 border-dashed">
-                        <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-400">
-                            <PackageOpen size={24} />
-                        </div>
-                        <h3 className="text-slate-900 font-medium">No products found</h3>
-                        <p className="text-slate-500 text-sm mt-1">
-                            {searchQuery ? 'Try adjusting your search' : 'Get started by adding your first product'}
-                        </p>
-                    </div>
-                )}
-            </div>
+            {loading ? (
+                <LoadingBlock label={t('product.list.loading')} />
+            ) : error ? (
+                <Card>
+                    <ErrorBlock message={error} onRetry={load} />
+                </Card>
+            ) : products.length > 0 ? (
+                <div className="space-y-3">
+                    {products.map((product) => (
+                        <ProductCard
+                            key={product.id}
+                            product={product}
+                            onClick={() => navigate(`/products/${product.id}`)}
+                        />
+                    ))}
+                </div>
+            ) : (
+                <Card>
+                    {copy && !searchQuery ? (
+                        // Reaching an empty filtered list is good news, not a
+                        // failure - it means the thing was dealt with.
+                        <EmptyBlock
+                            icon={<PackageOpen size={26} />}
+                            title={t('product.list.nothingLeft')}
+                            description={copy.empty}
+                            action={
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => setSearchParams({}, { replace: true })}
+                                >
+                                    {t('product.list.showAllProducts')}
+                                </Button>
+                            }
+                        />
+                    ) : (
+                        <EmptyBlock
+                            icon={<PackageOpen size={26} />}
+                            title={
+                                searchQuery
+                                    ? t('product.list.noMatch')
+                                    : t('product.list.empty')
+                            }
+                            description={
+                                searchQuery
+                                    ? t('product.list.noMatchHint')
+                                    : t('product.list.emptyHint')
+                            }
+                            action={
+                                searchQuery ? undefined : (
+                                    <Button onClick={() => navigate('/products/new')} icon={<Plus size={20} />}>
+                                        {t('product.list.addProduct')}
+                                    </Button>
+                                )
+                            }
+                        />
+                    )}
+                </Card>
+            )}
         </div>
     );
 }
 
-function ProductCard({ product, onClick }: { product: Product; onClick: () => void }) {
-    // Determine stock status based on product data
-    // Note: We don't have currentStock here, so we'll need to enhance this later
-    const getStatusColor = () => {
-        // For now, just show a neutral status
-        return 'bg-slate-100 text-slate-800';
-    };
+/**
+ * One row answers the three questions a shopkeeper actually has: how many are
+ * left, what it sells for, and what it cost. The selling price is the biggest
+ * number because it is the one quoted to customers.
+ */
+function ProductCard({ product, onClick }: { product: ProductWithNumbers; onClick: () => void }) {
+    const t = useT();
+    const subtitle = [product.brand, product.supplier?.name].filter(Boolean).join(' • ');
 
     return (
-        <div
+        <button
+            type="button"
             onClick={onClick}
-            className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm active:scale-[0.99] transition-transform cursor-pointer"
+            className="w-full text-left bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-slate-300 active:scale-[0.995] transition"
         >
-            <div className="flex justify-between items-start mb-2">
-                <div>
-                    <h3 className="font-semibold text-slate-900">{product.name}</h3>
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <h3 className="font-semibold text-slate-900 leading-snug">{product.name}</h3>
+                    {subtitle && <p className="text-sm text-slate-500 mt-0.5 truncate">{subtitle}</p>}
                     {product.barcode && (
-                        <p className="text-xs text-slate-500 font-mono bg-slate-50 inline-block px-1 rounded mt-1">
+                        <p className="text-xs text-slate-500 font-mono bg-slate-50 border border-slate-100 inline-block px-1.5 py-0.5 rounded mt-1.5">
                             {product.barcode}
                         </p>
                     )}
                 </div>
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor()}`}>
-                    View Details
-                </span>
+                <StockPill quantity={product.currentStock} />
             </div>
-            <div className="flex justify-between items-end mt-2">
-                <p className="text-sm text-slate-500">
-                    {product.brand && `${product.brand} • `}
-                    {product.supplier?.name || 'No supplier'}
-                </p>
+
+            <div className="flex items-end justify-between gap-4 mt-3 pt-3 border-t border-slate-100">
+                <div>
+                    <p className="text-xs text-slate-500">{t('product.sellsFor')}</p>
+                    <p className="text-lg font-bold text-slate-900 tabular-nums">
+                        {formatMoneyOrBlank(product.latestSell?.priceCents)}
+                    </p>
+                </div>
+                <div className="text-right">
+                    <p className="text-xs text-slate-500">{t('product.costsYou')}</p>
+                    <p className="text-base font-medium text-slate-600 tabular-nums">
+                        {formatMoneyOrBlank(product.latestCost?.priceCents)}
+                    </p>
+                </div>
             </div>
-        </div>
+        </button>
     );
 }

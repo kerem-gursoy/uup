@@ -1,29 +1,118 @@
-import { GoogleGenAI } from "@google/genai";
-import { RawGeminiInvoice } from "./invoiceTypes";
+import { GoogleGenAI, Type } from "@google/genai";
+import { RawGeminiInvoice } from "./invoiceTypes.js";
 
 const MODEL_NAME = "gemini-2.5-flash";
 
+/**
+ * The invoices this shop actually receives are Turkish, so the prompt names the
+ * Turkish column headings and, above all, spells out how Turkish writes numbers.
+ *
+ * That last part is not cosmetic. invoiceApply does Math.round(unitPrice * 100),
+ * so a "1.234,56" read as one-point-two-three-four writes a cost of 123 kuruş
+ * instead of ₺1234.56 and nothing downstream would notice.
+ */
 const PROMPT = `
 You are an invoice parser. Read the attached invoice image and extract structured data.
 The supplier is already known; do NOT infer or include supplier info.
-Return ONLY valid JSON with this exact shape:
-{
-  "issue_date": string | null,
-  "currency": string | null,
-  "line_items": [
-    {
-      "line_no": number | null,
-      "code": string | null,
-      "description": string,
-      "barcode": string | null,
-      "quantity": number | null,
-      "unit": string | null,
-      "unit_price": number | null,
-      "total_price": number | null
-    }
-  ]
-}
-Use null when a value is missing. Do not include any text outside the JSON.`;
+
+READING A TURKISH INVOICE
+The invoice is usually Turkish. Columns are typically headed:
+  Sıra / S.No / No                          -> line_no
+  Stok Kodu / Kod / Ürün Kodu / Mal Kodu    -> code
+  Malın Cinsi / Cinsi / Açıklama /
+    Mal ve Hizmet Açıklaması / Ürün Adı     -> description
+  Barkod / GTIN / EAN                       -> barcode
+  Miktar / Mik. / Adet                      -> quantity
+  Birim / Br.                               -> unit   (Adet, Kg, Lt, Paket, Koli, Kutu, Metre)
+  Birim Fiyat / B. Fiyat / Fiyat            -> unit_price   (for ONE unit, excluding VAT)
+  Tutar / Toplam Tutar                      -> total_price  (the row total, excluding VAT)
+
+WHICH ROWS ARE LINE ITEMS
+Return one entry per goods row only. Do NOT return summary, tax, discount or
+delivery rows. Skip rows such as:
+  KDV, KDV Tutarı, KDV Oranı, KDV Matrahı, VAT
+  Ara Toplam, Toplam, Genel Toplam, Ödenecek Tutar, Vergiler Dahil Toplam
+  İskonto, İndirim, Discount
+  Tevkifat, Stopaj, ÖTV, Damga Vergisi
+  Nakliye, Kargo, Navlun, Hizmet Bedeli, Ambalaj
+  "Yalnız ... Türk Lirası" (the total written out in words)
+  Notlar, Açıklamalar, İrsaliye bilgileri, IBAN and bank details, page headers
+  and footers, e-Arşiv / e-Fatura reference blocks, QR or barcode captions
+If a discount is a COLUMN on a goods row, keep the row and report unit_price
+exactly as printed in the Birim Fiyat column.
+
+TEXT FIELDS
+Copy description, unit and code VERBATIM, exactly as printed, in the invoice's
+own language, keeping its spelling, capitalisation and Turkish letters
+(ç ğ ı İ ö ş ü). Do NOT translate them into English. Do NOT expand
+abbreviations, fix spelling, change case or reorder words. If a description is
+printed across two lines, join the lines with a single space.
+
+NUMBERS - THIS MATTERS MORE THAN ANYTHING ELSE HERE
+Turkish invoices use "." for thousands and "," for decimals. Read them that way:
+  "1.234,56" is one thousand two hundred thirty-four and 56/100 -> 1234.56
+  "1.234"    is one thousand two hundred thirty-four            -> 1234
+  "0,85"     is eighty-five hundredths                          -> 0.85
+  "12,5"     is twelve and a half                               -> 12.5
+Emit every number as a JSON number written the en-US way: 1234.56, 1234, 0.85.
+Never emit a number as a string. Never keep a thousands separator. Never keep a
+decimal comma. Quantity may itself be fractional (1,5 Kg -> 1.5).
+If a figure is unreadable or absent, emit null. Do not guess, and do not compute
+a missing figure from the others.
+
+DATE
+issue_date is the invoice's own issue date (Fatura Tarihi / Düzenleme Tarihi),
+as "YYYY-MM-DD". Turkish invoices print dd.mm.yyyy or dd/mm/yyyy: THE DAY COMES
+FIRST, so "05.03.2026" is 2026-03-05, not 2026-05-03. Ignore any payment due
+date (Vade Tarihi) and any delivery note date (İrsaliye Tarihi).
+
+CURRENCY
+currency is the ISO 4217 code. "TL", "₺", "TRL" and "Türk Lirası" are all "TRY".
+"$" and "USD" are "USD"; "€" and "EUR" are "EUR". Use null if none is shown.
+
+Return only the JSON object matching the given schema.`;
+
+/**
+ * Declaring the numeric fields as NUMBER is the strongest guarantee available
+ * that a formatted string never reaches Math.round: it is enforced when the
+ * response is decoded, not just asked for in prose.
+ */
+const RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    issue_date: { type: Type.STRING, nullable: true, description: "YYYY-MM-DD" },
+    currency: { type: Type.STRING, nullable: true, description: "ISO 4217, e.g. TRY" },
+    line_items: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          line_no: { type: Type.INTEGER, nullable: true },
+          code: { type: Type.STRING, nullable: true },
+          description: { type: Type.STRING },
+          barcode: { type: Type.STRING, nullable: true },
+          quantity: { type: Type.NUMBER, nullable: true },
+          unit: { type: Type.STRING, nullable: true },
+          unit_price: { type: Type.NUMBER, nullable: true },
+          total_price: { type: Type.NUMBER, nullable: true },
+        },
+        required: ["description"],
+        propertyOrdering: [
+          "line_no",
+          "code",
+          "description",
+          "barcode",
+          "quantity",
+          "unit",
+          "unit_price",
+          "total_price",
+        ],
+      },
+    },
+  },
+  required: ["line_items"],
+  propertyOrdering: ["issue_date", "currency", "line_items"],
+};
 
 const stripCodeFences = (value: string) => {
   const trimmed = value.trim();
@@ -31,6 +120,15 @@ const stripCodeFences = (value: string) => {
   return withoutStart.replace(/```$/i, "").trim();
 };
 
+/**
+ * The response schema should make the string branch unreachable, but it is kept
+ * as the backstop for a response that arrives without one.
+ *
+ * Deliberately NOT taught to read "1.234,56": Number() gives NaN for it, which
+ * becomes null, which shows the review screen a blank field for someone to fill
+ * in. A blank a human completes is a better outcome than a plausible wrong
+ * number written into a cost history.
+ */
 const toNullableNumber = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -42,16 +140,19 @@ const toNullableNumber = (value: unknown) => {
   return null;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+
 const logGeminiError = (err: unknown) => {
-  const asAny = err as Record<string, unknown>;
-  const status = asAny?.response?.status;
-  const statusText = asAny?.response?.statusText;
-  const data = asAny?.response?.data;
+  const response = asRecord(asRecord(err).response);
+
   console.error("[Gemini] request failed", {
-    message: asAny?.message ?? String(err),
-    status,
-    statusText,
-    data,
+    message: asRecord(err).message ?? String(err),
+    status: response.status,
+    statusText: response.statusText,
+    data: response.data,
   });
 };
 
@@ -79,6 +180,13 @@ export const parseInvoiceWithGemini = async (
           ],
         },
       ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA,
+        // This is extraction, not writing: the same invoice has to read the same
+        // way twice, or a re-parse would silently disagree with what was applied.
+        temperature: 0,
+      },
     });
   } catch (err) {
     logGeminiError(err);
