@@ -75,12 +75,21 @@ export default function InvoiceLineItem({
             <div
                 className={clsx(
                     'rounded-2xl border transition-colors flex overflow-hidden',
+                    // The border stays neutral whatever the state is. Tinting it
+                    // too put the same signal in two places at once and the weaker
+                    // of them won: a ring of pale amber around the whole card read
+                    // as the card being coloured in, which buried the one stripe
+                    // that was meant to be doing the talking.
+                    // One background, chosen once. This was `bg-white` plus a
+                    // conditional `bg-slate-50`, which are the same specificity -
+                    // so which one applied came down to their order in the built
+                    // stylesheet, and bg-white lands later. A left-out row has
+                    // never actually been greyed.
                     open
                         ? 'border-blue-300 bg-white ring-4 ring-blue-50'
-                        : state === 'attention'
-                          ? 'border-amber-200 bg-white'
-                          : 'border-slate-200 bg-white',
-                    state === 'excluded' && !open && 'bg-slate-50'
+                        : state === 'excluded'
+                          ? 'border-slate-200 bg-slate-50'
+                          : 'border-slate-200 bg-white'
                 )}
             >
                 {/* Runs the full height of the card rather than only the closed
