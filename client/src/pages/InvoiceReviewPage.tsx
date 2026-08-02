@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft,
-    ArrowRight,
     AlertTriangle,
     Check,
     CheckCircle2,
@@ -411,12 +410,19 @@ export default function InvoiceReviewPage() {
     const blocked = tally.attention > 0 || tally.ready === 0;
 
     return (
-        // Enough to clear the action bar at its tallest - two rows when lines are
-        // outstanding - plus the phone's own navigation sitting under it.
-        <div className="pb-56 md:pb-40">
-            <header className="bg-white border-b border-slate-200 sticky top-16 z-20 -mx-4 md:-mx-8 px-4 md:px-8">
-                <div className="max-w-3xl mx-auto py-3">
-                    <div className="flex items-center gap-3">
+        // Clears the action bar, plus the phone's own navigation sitting under it.
+        <div className="pb-40 md:pb-28">
+            {/* -mt-8 is not a nudge: Layout fixes a 64px app bar and then pads
+                main to 96px, so anything starting at the top of a page begins 32px
+                below the bar with the page background showing through the gap. On
+                an ordinary page that reads as breathing room. On this one, which
+                puts its own white bar there and sticks it at top-16, it read as a
+                seam between two white headers - and closed itself the moment you
+                scrolled and the sticky took over. Cancelling the padding is the
+                same move the -mx already makes horizontally. */}
+            <header className="bg-white border-b border-slate-200 sticky top-16 z-20 -mt-8 -mx-4 md:-mx-8 px-4 md:px-8">
+                <div className="max-w-3xl mx-auto py-2.5">
+                    <div className="flex items-center gap-2">
                         <button
                             onClick={() => navigate('/invoices')}
                             aria-label={t('common.back')}
@@ -424,17 +430,16 @@ export default function InvoiceReviewPage() {
                         >
                             <ArrowLeft size={20} />
                         </button>
-                        <div className="flex-1 min-w-0">
-                            <h1 className="text-lg font-bold text-slate-900 truncate">
-                                {t('invoice.review.title')}
-                            </h1>
-                            {/* Fixed height whether or not there is anything to
-                                say, so the details below do not jump the moment
-                                the first edit turns this line on. */}
-                            <div className="h-4 flex items-center">
-                                <DraftStatus status={draftStatus} restoredAt={restoredAt} />
-                            </div>
-                        </div>
+                        {/* One row, and every part of it on the same baseline. The
+                            draft line used to sit under the title in a box kept
+                            open whether or not it had anything in it, which left a
+                            band of empty white through the middle of the header and
+                            set the back and re-read buttons floating apart. Out
+                            here it costs nothing when it is silent. */}
+                        <h1 className="flex-1 min-w-0 text-lg font-bold text-slate-900 truncate">
+                            {t('invoice.review.title')}
+                        </h1>
+                        <DraftStatus status={draftStatus} restoredAt={restoredAt} />
                         <button
                             onClick={() => setConfirmingReread(true)}
                             aria-label={t('invoice.review.reread')}
@@ -446,6 +451,7 @@ export default function InvoiceReviewPage() {
                     </div>
                 </div>
             </header>
+
 
             <div className="max-w-3xl mx-auto space-y-5 pt-5">
                 <section
@@ -486,7 +492,6 @@ export default function InvoiceReviewPage() {
                         setFilter(next);
                         setOpenUid(null);
                     }}
-                    onReviewNext={reviewNext}
                     onLeaveOutTheRest={leaveOutTheRest}
                 />
 
@@ -530,27 +535,27 @@ export default function InvoiceReviewPage() {
             </div>
 
             <div className="fixed left-0 right-0 bg-white border-t border-slate-200 p-4 safe-area-bottom bottom-16 md:bottom-0 z-30">
-                <div className="max-w-3xl mx-auto space-y-3">
+                {/* One row. What used to be here was a banner announcing the
+                    outstanding lines above a second line announcing the ready
+                    ones, which took two thirds of the bar to say one thing: why
+                    the button beside it is grey. Said once, next to the button,
+                    small - and carrying the same id either way, so the screen
+                    reader landing on a disabled Apply is told the reason too. */}
+                <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
                     {tally.attention > 0 ? (
-                        <div className="flex items-center justify-between gap-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
-                            <p className="text-sm text-amber-900 flex items-center gap-2">
-                                <AlertTriangle size={16} aria-hidden="true" className="shrink-0" />
-                                {tPlural('invoice.review.blocked', tally.attention)}
-                            </p>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setFilter('attention');
-                                    reviewNext();
-                                }}
-                                className="shrink-0 text-sm font-semibold text-amber-900 underline underline-offset-2 min-h-[44px] px-2"
-                            >
-                                {t('invoice.review.showThem')}
-                            </button>
-                        </div>
-                    ) : null}
-
-                    <div className="flex items-center justify-between gap-4">
+                        <button
+                            type="button"
+                            id="apply-summary"
+                            onClick={() => {
+                                setFilter('attention');
+                                reviewNext();
+                            }}
+                            className="min-w-0 flex items-start gap-1.5 text-left text-sm text-amber-700 hover:text-amber-900 underline decoration-amber-300 underline-offset-4 transition-colors"
+                        >
+                            <AlertTriangle size={15} aria-hidden="true" className="shrink-0 mt-0.5" />
+                            <span>{tPlural('invoice.review.blocked', tally.attention)}</span>
+                        </button>
+                    ) : (
                         <p className="text-sm text-slate-600" id="apply-summary">
                             {/* pluralKey picks the form Intl would, so the bold
                                 count can sit inside a sentence that inflects in
@@ -564,16 +569,17 @@ export default function InvoiceReviewPage() {
                                 }}
                             />
                         </p>
-                        <Button
-                            onClick={handleApply}
-                            busy={submitting}
-                            disabled={blocked}
-                            aria-describedby="apply-summary"
-                            icon={<CheckCircle2 size={20} />}
-                        >
-                            {submitting ? t('invoice.review.applying') : t('invoice.review.apply')}
-                        </Button>
-                    </div>
+                    )}
+                    <Button
+                        onClick={handleApply}
+                        busy={submitting}
+                        disabled={blocked}
+                        aria-describedby="apply-summary"
+                        icon={<CheckCircle2 size={20} />}
+                        className="shrink-0"
+                    >
+                        {submitting ? t('invoice.review.applying') : t('invoice.review.apply')}
+                    </Button>
                 </div>
             </div>
 
@@ -640,14 +646,12 @@ function Progress({
     segments,
     filter,
     onFilter,
-    onReviewNext,
     onLeaveOutTheRest,
 }: {
     tally: ReturnType<typeof tallyLines>;
     segments: { uid: string; state: LineState }[];
     filter: Filter;
     onFilter: (filter: Filter) => void;
-    onReviewNext: () => void;
     onLeaveOutTheRest: () => void;
 }) {
     const t = useT();
@@ -724,28 +728,18 @@ function Progress({
                 />
             </div>
 
-            {/* Both ways out of a stack of outstanding lines, in the order they
-                should be reached for: settle the next one, or - once it is clear
-                the rest are never going to be settled - deal with all of them at
-                once. The second is deliberately the quieter of the two. */}
+            {/* Getting to the next outstanding line is what the "Needs you" filter
+                above already does, so the full-width button that used to sit here
+                was a second front door taking up more room than the panel it was
+                in. What is left is the one action nothing else offers. */}
             {tally.attention > 0 && (
-                <div className="space-y-2">
-                    <Button
-                        variant="secondary"
-                        onClick={onReviewNext}
-                        icon={<ArrowRight size={20} />}
-                        className="w-full"
-                    >
-                        {t('invoice.review.reviewNext')}
-                    </Button>
-                    <button
-                        type="button"
-                        onClick={onLeaveOutTheRest}
-                        className="w-full min-h-[44px] px-3 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
-                    >
-                        {tPlural('invoice.review.leaveOutRest', tally.attention)}
-                    </button>
-                </div>
+                <button
+                    type="button"
+                    onClick={onLeaveOutTheRest}
+                    className="w-full min-h-[44px] px-3 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
+                >
+                    {tPlural('invoice.review.leaveOutRest', tally.attention)}
+                </button>
             )}
         </section>
     );
@@ -840,9 +834,13 @@ function DraftStatus({
     if (!shown) return null;
 
     return (
-        <span className={clsx('flex items-center gap-1 text-xs', shown.tone)}>
+        <span className={clsx('shrink-0 flex items-center gap-1 text-xs', shown.tone)}>
             {shown.icon}
-            {shown.label}
+            {/* The words go when the header gets tight; the icon stays, because a
+                save that is failing has to survive a narrow screen. */}
+            <span className={clsx(status === 'failed' ? 'inline' : 'hidden sm:inline')}>
+                {shown.label}
+            </span>
         </span>
     );
 }

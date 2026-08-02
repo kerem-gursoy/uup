@@ -279,7 +279,6 @@ export const en = {
     'invoice.review.willApply_other': '{count} lines will be applied',
     'invoice.review.blocked_one': '{count} line still needs you',
     'invoice.review.blocked_other': '{count} lines still need you',
-    'invoice.review.showThem': 'Show me',
 
     // Getting through the invoice ---------------------------------------------
     'invoice.review.progressTitle': 'Your progress',
@@ -289,7 +288,6 @@ export const en = {
     'invoice.review.filterAttention': 'Needs you',
     'invoice.review.filterReady': 'Ready',
     'invoice.review.filterExcluded': 'Left out',
-    'invoice.review.reviewNext': 'Go to the next one',
     'invoice.review.leaveOutRest_one': 'Leave out the {count} line that still needs you',
     'invoice.review.leaveOutRest_other': 'Leave out the {count} lines that still need you',
     'invoice.review.leftOutRest_one': '{count} line left out. Nothing will change for it.',

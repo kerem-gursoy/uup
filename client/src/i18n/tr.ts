@@ -277,7 +277,6 @@ export const tr: Dictionary = {
     'invoice.review.willApply_other': '{count} satır uygulanacak',
     'invoice.review.blocked_one': '{count} satır sizi bekliyor',
     'invoice.review.blocked_other': '{count} satır sizi bekliyor',
-    'invoice.review.showThem': 'Göster',
 
     // Getting through the invoice ---------------------------------------------
     'invoice.review.progressTitle': 'Durumunuz',
@@ -287,7 +286,6 @@ export const tr: Dictionary = {
     'invoice.review.filterAttention': 'Sizi bekleyen',
     'invoice.review.filterReady': 'Hazır',
     'invoice.review.filterExcluded': 'Dışarıda',
-    'invoice.review.reviewNext': 'Sıradakine git',
     'invoice.review.leaveOutRest_one': 'Sizi bekleyen {count} satırı dışarıda bırak',
     'invoice.review.leaveOutRest_other': 'Sizi bekleyen {count} satırı dışarıda bırak',
     'invoice.review.leftOutRest_one': '{count} satır dışarıda bırakıldı. Onlar için bir şey değişmeyecek.',
