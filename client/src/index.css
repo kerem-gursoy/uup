@@ -27,6 +27,13 @@
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+
+    /* Installed on a home screen there is no browser chrome to rubber-band
+       against, so an overscroll drag just exposes bare background under the app
+       and reads as it coming unstuck. This also disables pull-to-refresh, which
+       in an installed app is a way to discard a half-finished invoice review by
+       accident. */
+    overscroll-behavior-y: none;
   }
 }
 

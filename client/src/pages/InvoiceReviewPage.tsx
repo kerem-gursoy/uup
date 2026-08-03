@@ -534,7 +534,12 @@ export default function InvoiceReviewPage() {
                 </section>
             </div>
 
-            <div className="fixed left-0 right-0 bg-white border-t border-slate-200 p-4 safe-area-bottom bottom-16 md:bottom-0 z-30">
+            {/* Sits directly on top of the bottom nav, which is 4rem of content
+                plus the home-indicator inset - so the offset has to include the
+                inset too, or on a notched phone this bar lands on the nav. Above
+                md the nav is hidden and this bar is the one that has to clear the
+                home indicator itself. */}
+            <div className="fixed left-0 right-0 bg-white border-t border-slate-200 p-4 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))] z-30">
                 {/* One row. What used to be here was a banner announcing the
                     outstanding lines above a second line announcing the ready
                     ones, which took two thirds of the bar to say one thing: why
