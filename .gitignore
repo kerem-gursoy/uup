@@ -65,6 +65,13 @@ coverage
 # Local review artifacts (generated HTML + screenshots, not project files)
 .lavish/
 
+# Claude Code local state. `worktrees/` holds real git worktrees, each one its
+# own checkout with a .git file - `git add -A` reads that as a submodule and
+# commits a gitlink pointing at a commit no clone can resolve. settings.local.json
+# is per-machine permissions, not shared config.
+.claude/worktrees/
+.claude/settings.local.json
+
 # Exported Claude Code transcripts, kept as a human-readable record of why the
 # bigger changes were made - the reasoning behind a commit rather than the
 # commit itself. Local notes, not project files: they are raw terminal dumps,
