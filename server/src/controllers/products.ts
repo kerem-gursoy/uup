@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { parseId } from "../utils/parseId.js";
+import { displayText, textFingerprint } from "../services/textKeys.js";
 import {
   findCostRoseSincePriceSet,
   getCurrentStock,
@@ -21,6 +22,83 @@ type ProductInput = {
 
 /** Thrown for input we can explain to the user in plain language. */
 class InvalidInput extends Error {}
+
+/**
+ * Products that are probably the same thing as the given name, folded past case,
+ * accents, spacing and punctuation - so "COCA COLA 1LT" finds "Coca-Cola 1lt".
+ *
+ * Not enforced, only reported. Two products can honestly share a folded name
+ * (the same water from two suppliers), so this warns and lets the person decide,
+ * exactly as the supplier check does.
+ *
+ * Matched on the stored fingerprint where there is one, and re-folded in the
+ * application for rows predating that column - so this is correct before the
+ * backfill has run as well as after.
+ */
+const findSimilarProducts = async (
+  client: Prisma.TransactionClient,
+  name: string,
+  excludeId?: number
+) => {
+  const fingerprint = textFingerprint(name);
+  if (!fingerprint) return [];
+
+  const candidates = await client.product.findMany({
+    where: {
+      OR: [{ nameFingerprint: fingerprint }, { nameFingerprint: null }],
+      ...(excludeId === undefined ? {} : { NOT: { id: excludeId } }),
+    },
+    select: { id: true, name: true, brand: true, barcode: true, nameFingerprint: true },
+    take: 200,
+  });
+
+  return candidates
+    .filter((product) =>
+      product.nameFingerprint === null
+        ? textFingerprint(product.name) === fingerprint
+        : true
+    )
+    .slice(0, 5)
+    .map(({ id, name: productName, brand, barcode }) => ({
+      id,
+      name: productName,
+      brand,
+      barcode,
+    }));
+};
+
+/**
+ * Reports what already looks like the proposed product, creating nothing.
+ *
+ * The client calls this while the user types, so a near-duplicate is headed off
+ * before it is made. A duplicate product is worse here than it looks: it splits
+ * one item's stock and cost history across two rows, and it leaves the invoice
+ * matcher with two equally good answers for one line, which by design means it
+ * will then refuse to match either.
+ */
+export const checkProductName = async (req: Request, res: Response) => {
+  try {
+    const raw = req.query.name;
+    if (typeof raw !== "string" || !raw.trim()) {
+      return res.json({ valid: false, normalizedName: "", similar: [] });
+    }
+
+    const name = displayText(raw);
+    const excludeId =
+      typeof req.query.excludeId === "string" && /^\d+$/.test(req.query.excludeId)
+        ? Number(req.query.excludeId)
+        : undefined;
+
+    res.json({
+      valid: true,
+      normalizedName: name,
+      similar: await findSimilarProducts(req.prisma, name, excludeId),
+    });
+  } catch (err) {
+    console.error("Error checking product name:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
 
 const isDuplicateBarcode = (err: unknown) =>
   err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
@@ -129,9 +207,15 @@ export const createProduct = async (req: Request, res: Response) => {
      * atomic batch. If that batch fails the product is deleted again, so the
      * original guarantee still holds: a product is never left half set up.
      */
+    const productName = displayText(name);
+
     const product = await req.prisma.product.create({
       data: {
-        name: name.trim(),
+        name: productName,
+        // Kept in step with the name on every write. Search and duplicate
+        // detection both read it, so a stale one is a product that quietly stops
+        // being findable.
+        nameFingerprint: textFingerprint(productName),
         barcode: barcode?.trim() || null,
         brand: brand?.trim() || null,
         supplierId,
@@ -204,10 +288,26 @@ export const listProducts = async (req: Request, res: Response) => {
     const where: Prisma.ProductWhereInput = {};
 
     if (search) {
+      /*
+       * Two passes over the same query, because neither alone is enough.
+       *
+       * `contains` on the raw columns is what SQLite can do, and its LIKE folds
+       * case for ASCII only - so "ISIK" does not find "Işık", and "İSTANBUL"
+       * does not find "istanbul". Those are not edge cases in a Turkish shop.
+       *
+       * The fingerprint column is the same text with case, accents, spacing and
+       * punctuation folded away, so searching it with an equally folded query
+       * catches all of that. Kept as an OR rather than a replacement: a product
+       * added before the column existed has no fingerprint yet, and must still
+       * be findable by name.
+       */
+      const folded = textFingerprint(search);
+
       where.OR = [
         { name: { contains: search } },
         { barcode: { contains: search } },
         { brand: { contains: search } },
+        ...(folded ? [{ nameFingerprint: { contains: folded } }] : []),
       ];
     }
 
@@ -309,10 +409,13 @@ export const updateProduct = async (req: Request, res: Response) => {
       ? (req.body.barcode as string | null)?.trim() || null
       : undefined;
 
+    const productName = displayText(name);
+
     const product = await req.prisma.product.update({
       where: { id },
       data: {
-        name: name.trim(),
+        name: productName,
+        nameFingerprint: textFingerprint(productName),
         brand: brand?.trim() || null,
         supplierId,
         ...(barcode === undefined ? {} : { barcode }),
@@ -332,11 +435,16 @@ export const deleteProduct = async (req: Request, res: Response) => {
   try {
     const id = parseId(req.params.id);
 
-    // Price entries and stock movements have no meaning without their product,
-    // so they go with it. Without this the delete fails on the foreign key.
+    // Price entries, stock movements and any learned supplier mappings have no
+    // meaning without their product, so they go with it. Without this the delete
+    // fails on the foreign key.
     await req.prisma.$transaction([
       req.prisma.priceHistory.deleteMany({ where: { productId: id } }),
       req.prisma.stockMovement.deleteMany({ where: { productId: id } }),
+      // Left behind, these would point a future invoice line at a product that
+      // no longer exists - which the apply path rejects by line number, long
+      // after the reviewer has stopped being able to tell why.
+      req.prisma.supplierItem.deleteMany({ where: { productId: id } }),
       req.prisma.product.delete({ where: { id } }),
     ]);
 

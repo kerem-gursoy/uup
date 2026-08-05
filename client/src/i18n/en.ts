@@ -281,6 +281,14 @@ export const en = {
     'invoice.review.blocked_other': '{count} lines still need you',
 
     // Getting through the invoice ---------------------------------------------
+    'invoice.review.totalsTitle': 'The lines do not add up to the invoice total',
+    'invoice.review.totalsBody':
+        'The lines here come to {lines}, but the invoice says {document} before VAT.',
+    'invoice.review.totalsShort':
+        'That is {amount} missing - most often a line that was not read. Check the paper for anything not listed here, and add it by hand.',
+    'invoice.review.totalsOver':
+        'That is {amount} too much - most often a line counted twice, or a figure misread. Check the paper against the lines here.',
+
     'invoice.review.progressTitle': 'Your progress',
     'invoice.review.progressCount': '{done} of {total} settled',
     'invoice.review.filterLabel': 'Show which lines',
@@ -339,6 +347,23 @@ export const en = {
     'invoice.line.done': 'Done',
     'invoice.line.mismatch':
         'Quantity × unit price does not match the row total on the invoice ({total}). Check the figures before applying.',
+
+    // How a line came to have a product on it ----------------------------------
+    'invoice.line.matchedByBarcode': 'Matched by the barcode on this line.',
+    'invoice.line.matchedBySupplierCode':
+        "Matched by this supplier's code, from an invoice you applied before.",
+    'invoice.line.matchedBySupplierDescription':
+        'Matched by wording, from an invoice you applied before.',
+    'invoice.line.matchConflict':
+        "The barcode and this supplier's code point at different products, so neither was used. Please choose.",
+
+    // Units the shelf is not counted in ----------------------------------------
+    'invoice.line.unitWarning':
+        'The invoice counts this in {unit}, not single items. Stock is kept in single items.',
+    'invoice.line.unitConfirm': 'The number above is how many single items arrived',
+    // Front-loaded: this sits in a truncating one-line summary, so the unit has
+    // to survive the cut even when the rest of the sentence does not.
+    'invoice.line.unitShort': 'Counted in {unit}, not items',
 
     // Why a line is not ready yet ---------------------------------------------
     'invoice.problem.noProduct': 'Choose the product this line belongs to.',
@@ -418,6 +443,9 @@ export const en = {
     'product.form.brand': 'Brand',
     'product.form.supplier': 'Supplier',
     'product.form.supplierHint': 'Who you buy it from.',
+    'product.form.similarTitle': 'You may already have this',
+    'product.form.similarHint':
+        'Adding it twice splits its stock and cost history in two. Open one above if it is the same thing.',
     'product.form.notSet': 'Not set',
     'product.form.newSupplier': 'New',
     'product.form.usingSupplier': 'Using {name}',
@@ -454,6 +482,7 @@ export const en = {
         'Only the name is needed. Anything you do not know yet can be added later.',
     'product.add.saving': 'Adding…',
     'product.add.submit': 'Add product',
+    'product.add.submitAndAnother': 'Add and start another',
     'product.add.added': '{name} added',
 
     // Edit product -------------------------------------------------------------

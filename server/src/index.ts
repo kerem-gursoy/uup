@@ -17,6 +17,7 @@ import {
 } from "./controllers/suppliers.js";
 import {
   adjustStock,
+  checkProductName,
   createProduct,
   deleteProduct,
   getPriceHistory,
@@ -88,6 +89,8 @@ app.delete("/suppliers/:id", deleteSupplier);
 
 app.post("/products", createProduct);
 app.get("/products", listProducts);
+// Both declared before "/products/:id" so neither is ever read as an id.
+app.get("/products/check", checkProductName);
 app.get("/products/by-barcode/:barcode", getProductByBarcode);
 app.get("/products/:id", getProduct);
 app.put("/products/:id", updateProduct);

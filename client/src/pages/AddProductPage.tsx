@@ -1,17 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Check, Plus, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
 import {
     ApiError,
+    checkProductName,
     createProduct,
     errorMessage,
     getProductByBarcode,
     getSuppliers,
+    type SimilarProduct,
     type Supplier,
 } from '../services/api';
 import BarcodeScanner from '../components/BarcodeScanner';
 import SupplierDialog from '../components/SupplierDialog';
+import { useDebounce } from '../hooks/useDebounce';
 import {
     centsToInputValue,
     compareNames,
@@ -52,6 +55,14 @@ export default function AddProductPage() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
+    /** Products that already look like this one. A warning, never a refusal. */
+    const [similar, setSimilar] = useState<SimilarProduct[]>([]);
+
+    const debouncedName = useDebounce(name.trim(), 400);
+    const debouncedBarcode = useDebounce(barcode.trim(), 400);
+
+    /** Focused again after "Add another", so the next product starts by typing. */
+    const nameRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         // A missing supplier list should not block adding a product, so a
@@ -65,26 +76,79 @@ export default function AddProductPage() {
     const sellCents = parseMoneyToCents(sell);
     const profit = profitFrom(costCents, sellCents);
 
-    /**
-     * A scanned barcode goes straight into the field, then we check whether some
-     * other product already owns it - the server rejects duplicates, and finding
-     * that out only on save would waste everything else the user typed.
+    /*
+     * A barcode typed by hand gets the same check as a scanned one.
+     *
+     * It used to only run on scan, so typing a duplicate survived every other
+     * field and surfaced as a 409 on submit - the exact waste the scan path was
+     * written to avoid, reached by the slower of the two routes in.
      */
-    const handleScanned = async (code: string) => {
+    useEffect(() => {
+        if (!debouncedBarcode) {
+            setBarcodeOwner(null);
+            return;
+        }
+
+        let cancelled = false;
+
+        getProductByBarcode(debouncedBarcode)
+            .then((existing) => {
+                if (!cancelled) setBarcodeOwner({ id: existing.id, name: existing.name });
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                // A 404 is the good outcome: nothing else uses this barcode.
+                setBarcodeOwner(null);
+                if (!(err instanceof ApiError && err.status === 404)) {
+                    console.error('Barcode check failed:', err);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [debouncedBarcode]);
+
+    /*
+     * Near-duplicate names, headed off while they are being typed.
+     *
+     * A duplicate product is worse than it looks: it splits one item's stock and
+     * cost history across two rows, and it leaves the invoice matcher with two
+     * equally good answers for one line - which, by design, means it then
+     * refuses to match either and the picker asks every month forever.
+     */
+    useEffect(() => {
+        if (debouncedName.length < 2) {
+            setSimilar([]);
+            return;
+        }
+
+        let cancelled = false;
+
+        checkProductName(debouncedName)
+            .then((result) => {
+                if (!cancelled) setSimilar(result.similar);
+            })
+            .catch((err) => {
+                // Advisory only, so a failure here must never block adding a
+                // product - it just means no warning this time.
+                if (!cancelled) console.error('Product name check failed:', err);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [debouncedName]);
+
+    /**
+     * A scanned barcode goes straight into the field, and the effect above does
+     * the rest - scanning and typing now reach the same check by the same route,
+     * rather than the scan path carrying its own copy of it.
+     */
+    const handleScanned = (code: string) => {
         setScannerOpen(false);
         setBarcode(code);
-        setBarcodeOwner(null);
         setErrors((current) => ({ ...current, barcode: '' }));
-
-        try {
-            const existing = await getProductByBarcode(code);
-            setBarcodeOwner({ id: existing.id, name: existing.name });
-        } catch (err) {
-            // A 404 is the good outcome: nothing else uses this barcode.
-            if (!(err instanceof ApiError && err.status === 404)) {
-                console.error('Barcode check failed:', err);
-            }
-        }
     };
 
     const validate = () => {
@@ -115,7 +179,17 @@ export default function AddProductPage() {
         return Object.keys(found).length === 0;
     };
 
-    const handleSubmit = async (event: React.FormEvent) => {
+    /**
+     * Saves, then either opens the new product or clears down for the next one.
+     *
+     * "Add another" exists for the week that decides whether a shop sticks with
+     * this at all: moving off paper means entering hundreds of products, and
+     * doing it through save → detail → back → new is most of an evening spent
+     * navigating rather than typing. What it keeps is what stays the same down a
+     * delivery note - the supplier, the brand, the price date - and what it
+     * clears is everything that identifies one particular item.
+     */
+    const handleSubmit = async (event: React.FormEvent, addAnother = false) => {
         event.preventDefault();
         if (!validate()) return;
 
@@ -133,7 +207,23 @@ export default function AddProductPage() {
             });
 
             toast.success(t('product.add.added', { name: product.name }));
-            navigate(`/products/${product.id}`, { replace: true });
+
+            if (!addAnother) {
+                navigate(`/products/${product.id}`, { replace: true });
+                return;
+            }
+
+            setName('');
+            setBarcode('');
+            setQuantity('0');
+            setCost('');
+            setSell('');
+            setSimilar([]);
+            setBarcodeOwner(null);
+            setErrors({});
+            // Straight back to the field every product starts with, so the next
+            // one can be typed without reaching for the screen.
+            nameRef.current?.focus();
         } catch (err) {
             toast.error(errorMessage(err, t('error.productAdd')));
         } finally {
@@ -160,6 +250,7 @@ export default function AddProductPage() {
                 <Field label={t('product.form.name')} htmlFor="name" error={errors.name}>
                     <TextInput
                         id="name"
+                        ref={nameRef}
                         value={name}
                         onChange={(event) => setName(event.target.value)}
                         placeholder={t('product.form.namePlaceholder')}
@@ -167,6 +258,37 @@ export default function AddProductPage() {
                         autoFocus
                     />
                 </Field>
+
+                {/* A warning, never a refusal: two products can honestly share a
+                    name once case and punctuation are folded away - the same
+                    water from two suppliers - so this offers the ones that
+                    already exist and lets the person decide. */}
+                {similar.length > 0 && (
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+                        <p className="text-amber-900 font-medium">
+                            {t('product.form.similarTitle')}
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                            {similar.map((product) => (
+                                <li key={product.id}>
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate(`/products/${product.id}`)}
+                                        className="text-left text-amber-900 underline min-h-[44px]"
+                                    >
+                                        {product.name}
+                                        {product.brand && (
+                                            <span className="text-amber-700"> · {product.brand}</span>
+                                        )}
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                        <p className="mt-1 text-sm text-amber-800">
+                            {t('product.form.similarHint')}
+                        </p>
+                    </div>
+                )}
 
                 <Field
                     label={t('product.form.barcode')}
@@ -357,6 +479,18 @@ export default function AddProductPage() {
             <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                 <Button type="button" variant="secondary" onClick={() => navigate('/products')}>
                     {t('common.cancel')}
+                </Button>
+                {/* Deliberately not the primary action. Filling the catalogue is
+                    a job somebody does for one week; opening what they just made
+                    is what they want every other time. */}
+                <Button
+                    type="button"
+                    variant="secondary"
+                    busy={saving}
+                    onClick={(event) => handleSubmit(event, true)}
+                    icon={<Plus size={20} />}
+                >
+                    {t('product.add.submitAndAnother')}
                 </Button>
                 <Button type="submit" busy={saving} icon={<Check size={20} />}>
                     {saving ? t('product.add.saving') : t('product.add.submit')}

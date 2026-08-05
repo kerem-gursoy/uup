@@ -1,7 +1,26 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { RawGeminiInvoice } from "./invoiceTypes.js";
+import { GenerateContentResponse, GoogleGenAI, Type } from "@google/genai";
+import { ParseUsage, RawGeminiInvoice } from "./invoiceTypes.js";
 
 const MODEL_NAME = "gemini-2.5-flash";
+
+/**
+ * What one reading of one invoice cost, and the shape of it.
+ *
+ * Nothing acts on this - there is no budget, no cap, and no thinkingConfig set
+ * anywhere in this file. That is deliberate: this shop is nowhere near a limit
+ * worth defending against, and capping the model's thinking to save a fraction
+ * of a lira would be trading accuracy on a task where being wrong writes bad
+ * numbers into a cost history.
+ *
+ * It is recorded because the alternative is not knowing. thoughtsTokens in
+ * particular bills at the output rate and is invisible in the response body, so
+ * without this line the real cost of a reading is unobservable. If it ever does
+ * get out of hand, the numbers to make that decision with will already be here.
+ */
+export type GeminiInvoiceReading = {
+  invoice: RawGeminiInvoice;
+  usage: ParseUsage | null;
+};
 
 /**
  * The invoices this shop actually receives are Turkish, so the prompt names the
@@ -70,6 +89,17 @@ CURRENCY
 currency is the ISO 4217 code. "TL", "₺", "TRL" and "Türk Lirası" are all "TRY".
 "$" and "USD" are "USD"; "€" and "EUR" are "EUR". Use null if none is shown.
 
+THE INVOICE'S OWN TOTALS
+Read these from the summary block, exactly as printed. They are NOT line items
+and must not appear in line_items. Do not compute any of them yourself - if a
+figure is not printed on the document, emit null.
+  Ara Toplam / Mal Hizmet Toplam Tutarı / Toplam        -> subtotal
+    (the goods total BEFORE VAT)
+  KDV / KDV Tutarı / Hesaplanan KDV                     -> vat_total
+  Genel Toplam / Ödenecek Tutar / Vergiler Dahil Toplam -> grand_total
+These are checked against the sum of the lines you return, which is how a line
+you missed gets noticed. Accuracy here matters as much as the lines themselves.
+
 Return only the JSON object matching the given schema.`;
 
 /**
@@ -82,6 +112,21 @@ const RESPONSE_SCHEMA = {
   properties: {
     issue_date: { type: Type.STRING, nullable: true, description: "YYYY-MM-DD" },
     currency: { type: Type.STRING, nullable: true, description: "ISO 4217, e.g. TRY" },
+    subtotal: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: "Goods total before VAT, as printed (Ara Toplam)",
+    },
+    vat_total: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: "VAT amount, as printed (KDV Tutarı)",
+    },
+    grand_total: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: "Payable total including VAT, as printed (Genel Toplam)",
+    },
     line_items: {
       type: Type.ARRAY,
       items: {
@@ -111,7 +156,14 @@ const RESPONSE_SCHEMA = {
     },
   },
   required: ["line_items"],
-  propertyOrdering: ["issue_date", "currency", "line_items"],
+  propertyOrdering: [
+    "issue_date",
+    "currency",
+    "subtotal",
+    "vat_total",
+    "grand_total",
+    "line_items",
+  ],
 };
 
 const stripCodeFences = (value: string) => {
@@ -156,10 +208,26 @@ const logGeminiError = (err: unknown) => {
   });
 };
 
+const toTokenCount = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/** The token counts the response carries, or null when it reported none. */
+const readUsage = (result: GenerateContentResponse): ParseUsage | null => {
+  const usage = result.usageMetadata;
+  if (!usage) return null;
+
+  return {
+    promptTokens: toTokenCount(usage.promptTokenCount),
+    outputTokens: toTokenCount(usage.candidatesTokenCount),
+    thoughtsTokens: toTokenCount(usage.thoughtsTokenCount),
+    totalTokens: toTokenCount(usage.totalTokenCount),
+  };
+};
+
 export const parseInvoiceWithGemini = async (
   imageBuffer: Buffer,
   mimeType: string
-): Promise<RawGeminiInvoice> => {
+): Promise<GeminiInvoiceReading> => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured");
@@ -186,6 +254,8 @@ export const parseInvoiceWithGemini = async (
         // This is extraction, not writing: the same invoice has to read the same
         // way twice, or a re-parse would silently disagree with what was applied.
         temperature: 0,
+        // No thinkingConfig on purpose - see GeminiInvoiceReading above. The
+        // model is left to spend whatever it needs on a page of Turkish numbers.
       },
     });
   } catch (err) {
@@ -212,10 +282,23 @@ export const parseInvoiceWithGemini = async (
   const invoice = parsed as Partial<RawGeminiInvoice>;
   const lineItems = Array.isArray(invoice.line_items) ? invoice.line_items : [];
 
-  return {
+  const usage = readUsage(result);
+  console.log("[Gemini] invoice read", {
+    model: MODEL_NAME,
+    lines: lineItems.length,
+    promptTokens: usage?.promptTokens ?? null,
+    outputTokens: usage?.outputTokens ?? null,
+    thoughtsTokens: usage?.thoughtsTokens ?? null,
+    totalTokens: usage?.totalTokens ?? null,
+  });
+
+  const reading: RawGeminiInvoice = {
     supplier_name: invoice.supplier_name ?? null,
     issue_date: invoice.issue_date ?? null,
     currency: invoice.currency ?? null,
+    subtotal: toNullableNumber(invoice.subtotal),
+    vat_total: toNullableNumber(invoice.vat_total),
+    grand_total: toNullableNumber(invoice.grand_total),
     line_items: lineItems.map((item) => ({
       line_no: toNullableNumber(item?.line_no) ?? null,
       code: item?.code ?? null,
@@ -227,4 +310,6 @@ export const parseInvoiceWithGemini = async (
       total_price: toNullableNumber(item?.total_price),
     })),
   };
+
+  return { invoice: reading, usage };
 };

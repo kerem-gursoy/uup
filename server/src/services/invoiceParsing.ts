@@ -10,7 +10,7 @@ import {
 } from "./invoiceReview.js";
 import {
   CachedInvoiceParse,
-  ParsedInvoiceLine,
+  DocumentLine,
   ParsedInvoiceResponse,
   RawGeminiInvoice,
 } from "./invoiceTypes.js";
@@ -54,7 +54,7 @@ const disagreesWithTotal = (
   return Math.abs(quantity * unitPrice - totalPrice) / Math.abs(totalPrice) > TOTAL_TOLERANCE;
 };
 
-const normalizeLineItem = (line: RawGeminiInvoice["line_items"][number]): ParsedInvoiceLine => {
+const normalizeLineItem = (line: RawGeminiInvoice["line_items"][number]): DocumentLine => {
   const description = typeof line.description === "string" ? line.description.trim() : "";
 
   const quantity = toNullableNumber(line.quantity);
@@ -70,10 +70,6 @@ const normalizeLineItem = (line: RawGeminiInvoice["line_items"][number]): Parsed
     unit: toNullableString(line.unit),
     unitPrice,
     totalPrice,
-    matchedProductId: null,
-    matchedProductName: null,
-    matchedBrand: null,
-    matchScore: 0,
     priceMismatch: disagreesWithTotal(quantity, unitPrice, totalPrice),
   };
 };
@@ -92,22 +88,25 @@ const readInvoiceDocument = async (
   // Buffer is available under nodejs_compat, so gemini.ts needs no change.
   const fileBuffer = Buffer.from(await object.arrayBuffer());
 
-  const parsedInvoice = await parseInvoiceWithGemini(fileBuffer, mimeType);
+  const { invoice: parsedInvoice, usage } = await parseInvoiceWithGemini(
+    fileBuffer,
+    mimeType
+  );
 
-  const lines: ParsedInvoiceLine[] = [];
-
-  for (const line of parsedInvoice.line_items ?? []) {
-    const parsedLine = normalizeLineItem(line);
-
-    // Skip DB matching during parsing; leave matching for finalization step.
-    lines.push(parsedLine);
-  }
-
+  // Only what the document itself says is stored. Product matching is resolved
+  // on every read instead - see invoiceTypes.ts for why caching it would be
+  // wrong.
   return {
     supplierFromDocument: parsedInvoice.supplier_name ?? null,
     issueDate: parsedInvoice.issue_date ?? null,
     currency: parsedInvoice.currency ?? null,
-    lines,
+    totals: {
+      subtotal: toNullableNumber(parsedInvoice.subtotal),
+      vatTotal: toNullableNumber(parsedInvoice.vat_total),
+      grandTotal: toNullableNumber(parsedInvoice.grand_total),
+    },
+    lines: (parsedInvoice.line_items ?? []).map(normalizeLineItem),
+    usage,
   };
 };
 
@@ -134,6 +133,7 @@ export const parseAndMatchInvoice = async (
     select: {
       id: true,
       supplierId: true,
+      status: true,
       storedPath: true,
       mimeType: true,
       parsedJson: true,
@@ -148,7 +148,17 @@ export const parseAndMatchInvoice = async (
 
   if (!refresh && invoice.parsedAt) {
     const cached = decodeParse(invoice.parsedJson);
-    if (cached) return buildParsedResponse(invoice, cached, invoice.parsedAt);
+    if (cached) {
+      return buildParsedResponse(client, invoice, cached, invoice.parsedAt);
+    }
+  }
+
+  // An applied invoice's movements are already written, and its reading is the
+  // record of where they came from. Replacing that would spend a paid call to
+  // rewrite history nobody can act on - so it is refused here the same way
+  // saving a draft against one is.
+  if (invoice.status === "APPLIED") {
+    throw new HttpError("Invoice already applied", 409);
   }
 
   const parse = await readInvoiceDocument(invoice.storedPath, invoice.mimeType);
@@ -166,5 +176,5 @@ export const parseAndMatchInvoice = async (
     },
   });
 
-  return buildParsedResponse(invoice, parse, parsedAt);
+  return buildParsedResponse(client, invoice, parse, parsedAt);
 };

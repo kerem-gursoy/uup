@@ -50,6 +50,14 @@ const READING: ParsedInvoiceResponse = {
     supplierFromDocument: null,
     issueDate: '2026-07-01',
     currency: 'TRY',
+    totals: { subtotal: 1478, vatTotal: 295.6, grandTotal: 1773.6 },
+    totalsCheck: {
+        status: 'agrees',
+        linesTotal: 1478,
+        documentTotal: 1478,
+        difference: 0,
+        linesMissingTotal: 0,
+    },
     parsedAt: '2026-07-31T10:00:00.000Z',
     lines: [
         {
@@ -64,7 +72,8 @@ const READING: ParsedInvoiceResponse = {
             matchedProductId: null,
             matchedProductName: null,
             matchedBrand: null,
-            matchScore: 0,
+            matchedBy: null,
+            matchRefusedBecause: null,
             priceMismatch: false,
         },
         {
@@ -79,7 +88,8 @@ const READING: ParsedInvoiceResponse = {
             matchedProductId: null,
             matchedProductName: null,
             matchedBrand: null,
-            matchScore: 0,
+            matchedBy: null,
+            matchRefusedBecause: null,
             priceMismatch: false,
         },
     ],
@@ -484,5 +494,124 @@ describe('working on the review', () => {
 
         expect(screen.getByText(/Add 400 to what you have on the shelf/i)).toBeDefined();
         expect(screen.getByText(/Record .* as the new cost of one/i)).toBeDefined();
+    });
+});
+
+/**
+ * The three things this screen learned to say. Each one exists because the
+ * alternative is a number going quietly wrong: a line nobody noticed was
+ * missing, a case counted as a piece, or a product filled in for a reason
+ * nobody can see.
+ */
+describe('what the screen says about the reading itself', () => {
+    const withCheck = (over: Partial<ParsedInvoiceResponse['totalsCheck']>) => ({
+        ...READING,
+        totalsCheck: { ...READING.totalsCheck, ...over },
+    });
+
+    it('says so when the lines do not add up to the printed total', async () => {
+        // The only signal that can exist for a line the reading dropped: the row
+        // is not there to be wrong, so only the arithmetic can notice.
+        getInvoiceReview.mockResolvedValue({
+            parsed: withCheck({ status: 'disagrees', linesTotal: 1478, documentTotal: 1598, difference: 120 }),
+            draft: null,
+        });
+
+        openReviewScreen();
+
+        expect(await screen.findByText(/do not add up to the invoice total/i)).toBeDefined();
+        expect(screen.getByText(/missing/i)).toBeDefined();
+    });
+
+    it('stays quiet when the lines account for the total', async () => {
+        getInvoiceReview.mockResolvedValue({ parsed: READING, draft: null });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        expect(screen.queryByText(/do not add up to the invoice total/i)).toBeNull();
+    });
+
+    it('stays quiet when it could not check', async () => {
+        // "Unknown" must never be dressed up as either answer.
+        getInvoiceReview.mockResolvedValue({
+            parsed: withCheck({ status: 'unknown', documentTotal: null, difference: null }),
+            draft: null,
+        });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        expect(screen.queryByText(/do not add up to the invoice total/i)).toBeNull();
+    });
+
+    it('says why a line was matched, so a filled-in product is not a mystery', async () => {
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [settledLine({ matchedBy: 'supplierCode' })],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+
+        expect(screen.getByText(/from an invoice you applied before/i)).toBeDefined();
+    });
+
+    it('explains a refusal to match rather than looking like it never tried', async () => {
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [settledLine({ productId: null, matchRefusedBecause: 'conflict' })],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+
+        expect(screen.getByText(/point at different products/i)).toBeDefined();
+    });
+
+    it('will not let a case-packed line be applied until somebody confirms it', async () => {
+        /*
+         * "5 KOLI" is a whole number, so every other check passes it and applying
+         * adds 5 to the shelf when 120 arrived. The line has to block, and Apply
+         * has to stay shut while it does.
+         */
+        getInvoiceReview.mockResolvedValue({
+            parsed: READING,
+            draft: {
+                updatedAt: '2026-07-31T10:05:00.000Z',
+                lines: [settledLine({ unit: 'KOLI', quantity: 5 })],
+            },
+        });
+
+        openReviewScreen();
+        await screen.findByText('BAKLAVA KABI 500GR');
+
+        expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+            'disabled',
+            true
+        );
+
+        fireEvent.click(rowToggle('BAKLAVA KABI 500GR'));
+        expect(screen.getByText(/counts this in KOLI, not single items/i)).toBeDefined();
+
+        // Confirming is the reviewer's act, and it is what unblocks Apply.
+        fireEvent.click(
+            screen.getByLabelText(/number above is how many single items arrived/i)
+        );
+
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: /Apply invoice/i })).toHaveProperty(
+                'disabled',
+                false
+            );
+        });
     });
 });

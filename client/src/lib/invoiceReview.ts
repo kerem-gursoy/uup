@@ -1,4 +1,4 @@
-import type { ParsedInvoiceResponse } from '../services/api';
+import type { MatchEvidence, MatchRefusal, ParsedInvoiceResponse } from '../services/api';
 
 /**
  * A single row of the invoice review screen, and the two ways one gets built:
@@ -34,15 +34,79 @@ export interface LineItemState {
     brand?: string | null;
     barcode: string | null;
     code: string | null;
-    /** The unit the document counted in - "ADET", "KG". Shown, never applied:
-     *  stock is kept in whole units whatever the supplier billed in. */
+    /**
+     * The unit the document counted in - "ADET", "KG", "KOLI".
+     *
+     * Stock is kept in whole pieces whatever the supplier billed in, so this is
+     * never applied as a multiplier. It is not merely decorative either: see
+     * needsUnitCheck below for the quiet way it used to go wrong.
+     */
     unit?: string | null;
+    /**
+     * Set when the reviewer has confirmed that `quantity` is a count of pieces,
+     * for a line the supplier billed in something else.
+     *
+     * Only ever set by a person. That is the entire point of it.
+     */
+    quantityConfirmed?: boolean;
     matchedProductName?: string | null;
     matchedBrand?: string | null;
-    matchScore?: number;
+    /** Which rule found the product, so the row can say why it is filled in. */
+    matchedBy?: MatchEvidence | null;
+    /** Evidence was found and refused - two rules named different products. */
+    matchRefusedBecause?: MatchRefusal | null;
     /** Set by the parser when the row does not add up - see the warning it draws. */
     priceMismatch?: boolean;
     totalPrice?: number | null;
+}
+
+/**
+ * Units that mean "one of the thing", in the spellings suppliers actually print.
+ *
+ * Anything not on this list is a unit whose count is not a count of pieces, and
+ * that is what needsUnitCheck exists to catch.
+ */
+const PIECE_UNITS = new Set([
+    'adet',
+    'ad',
+    'adt',
+    'ade',
+    'tane',
+    'tn',
+    'piece',
+    'pieces',
+    'pcs',
+    'pc',
+    'ea',
+    'each',
+    'unit',
+    'units',
+]);
+
+/**
+ * Whether this line's quantity needs a human to confirm it is a piece count.
+ *
+ * The failure this prevents is the quietest one in the pipeline. Applying a line
+ * writes `quantity` straight into a stock movement, in pieces. A line billed as
+ * "1,5 KG" is caught already, because 1.5 is not a whole number and validation
+ * rejects it loudly. A line billed as "5 KOLI" of a twenty-four pack is a whole
+ * number, so it sails through every check there is and adds 5 to the shelf when
+ * 120 arrived - and nothing downstream ever questions it.
+ *
+ * So a non-piece unit blocks the line until somebody says what the real count
+ * is. Deliberately NOT a conversion: the app does not know how many are in this
+ * supplier's case, guessing would recreate the same silent error with more
+ * steps, and the person holding the delivery note can simply read it.
+ *
+ * A missing unit does not trigger this. Plenty of invoices print no unit column
+ * at all, and treating "unknown" as "suspicious" would block every line on those
+ * documents to say nothing useful.
+ */
+export function needsUnitCheck(unit: string | null | undefined): boolean {
+    const normalized = unit?.trim().toLowerCase().replace(/\.$/, '');
+    if (!normalized) return false;
+
+    return !PIECE_UNITS.has(normalized);
 }
 
 export function newLineUid(): string {
@@ -67,6 +131,9 @@ export function blankLine(): LineItemState {
         barcode: null,
         code: null,
         unit: null,
+        quantityConfirmed: false,
+        matchedBy: null,
+        matchRefusedBecause: null,
     };
 }
 
@@ -92,9 +159,14 @@ export function linesFromParse(parsed: ParsedInvoiceResponse): LineItemState[] {
         barcode: line.barcode,
         code: line.code,
         unit: line.unit,
+        // Never carried over from a reading. A confirmation is a thing a person
+        // did, and starting it true would be the app confirming on their behalf
+        // exactly the number it cannot check.
+        quantityConfirmed: false,
         matchedProductName: line.matchedProductName,
         matchedBrand: line.matchedBrand,
-        matchScore: line.matchScore,
+        matchedBy: line.matchedBy,
+        matchRefusedBecause: line.matchRefusedBecause,
         priceMismatch: line.priceMismatch,
         totalPrice: line.totalPrice,
     }));
@@ -116,6 +188,11 @@ export type LineProblem =
     | 'nothingToUpdate'
     /** Stock is being updated, but the count is missing or not a whole number. */
     | 'quantity'
+    /**
+     * Stock is being updated from a quantity the supplier billed in something
+     * other than pieces, and nobody has confirmed what the piece count is.
+     */
+    | 'unitUnconfirmed'
     /** Cost is being recorded, but the amount is missing or not positive. */
     | 'price';
 
@@ -137,6 +214,9 @@ export function lineProblems(line: LineItemState): LineProblem[] {
     if (line.productId === null) problems.push('noProduct');
     if (!line.applyStock && !line.applyPrice) problems.push('nothingToUpdate');
     if (line.applyStock && !isUsableQuantity(line.quantity)) problems.push('quantity');
+    if (line.applyStock && needsUnitCheck(line.unit) && !line.quantityConfirmed) {
+        problems.push('unitUnconfirmed');
+    }
     if (line.applyPrice && !isUsablePrice(line.unitPrice)) problems.push('price');
 
     return problems;
@@ -172,6 +252,16 @@ const stringOrNull = (value: unknown): string | null =>
 
 const booleanOr = (value: unknown, fallback: boolean): boolean =>
     typeof value === 'boolean' ? value : fallback;
+
+const MATCH_EVIDENCE: readonly MatchEvidence[] = [
+    'barcode',
+    'supplierCode',
+    'supplierDescription',
+];
+
+/** Anything that is not one of the known reasons is read as "no reason given". */
+const matchEvidenceOrNull = (value: unknown): MatchEvidence | null =>
+    MATCH_EVIDENCE.includes(value as MatchEvidence) ? (value as MatchEvidence) : null;
 
 /**
  * A stored draft turned back into review lines, or null if it cannot be trusted.
@@ -209,9 +299,13 @@ export function linesFromDraft(stored: unknown[]): LineItemState[] | null {
             barcode: stringOrNull(entry.barcode),
             code: stringOrNull(entry.code),
             unit: stringOrNull(entry.unit),
+            // Defaults to false, so a draft written before this field existed
+            // asks its unit question once rather than counting as answered.
+            quantityConfirmed: booleanOr(entry.quantityConfirmed, false),
             matchedProductName: stringOrNull(entry.matchedProductName),
             matchedBrand: stringOrNull(entry.matchedBrand),
-            matchScore: numberOrNull(entry.matchScore) ?? 0,
+            matchedBy: matchEvidenceOrNull(entry.matchedBy),
+            matchRefusedBecause: entry.matchRefusedBecause === 'conflict' ? 'conflict' : null,
             priceMismatch: booleanOr(entry.priceMismatch, false),
             totalPrice: numberOrNull(entry.totalPrice),
         });

@@ -279,6 +279,14 @@ export const tr: Dictionary = {
     'invoice.review.blocked_other': '{count} satır sizi bekliyor',
 
     // Getting through the invoice ---------------------------------------------
+    'invoice.review.totalsTitle': 'Satırların toplamı fatura toplamını tutmuyor',
+    'invoice.review.totalsBody':
+        'Buradaki satırlar {lines} ediyor, fatura ise KDV hariç {document} diyor.',
+    'invoice.review.totalsShort':
+        '{amount} eksik - çoğunlukla okunamamış bir satır olur. Kâğıtta burada olmayan bir satır var mı bakın ve elle ekleyin.',
+    'invoice.review.totalsOver':
+        '{amount} fazla - çoğunlukla iki kez sayılmış bir satır ya da yanlış okunmuş bir rakam olur. Kâğıdı buradaki satırlarla karşılaştırın.',
+
     'invoice.review.progressTitle': 'Durumunuz',
     'invoice.review.progressCount': '{total} satırın {done} tanesi tamam',
     'invoice.review.filterLabel': 'Hangi satırlar görünsün',
@@ -336,6 +344,21 @@ export const tr: Dictionary = {
     'invoice.line.done': 'Tamam',
     'invoice.line.mismatch':
         'Miktar × birim fiyat, faturadaki satır toplamıyla ({total}) uyuşmuyor. Uygulamadan önce rakamları kontrol edin.',
+
+    // How a line came to have a product on it ----------------------------------
+    'invoice.line.matchedByBarcode': 'Bu satırdaki barkoddan eşleşti.',
+    'invoice.line.matchedBySupplierCode':
+        'Daha önce uyguladığınız bir faturadan, bu tedarikçinin koduyla eşleşti.',
+    'invoice.line.matchedBySupplierDescription':
+        'Daha önce uyguladığınız bir faturadan, ürün açıklamasıyla eşleşti.',
+    'invoice.line.matchConflict':
+        'Barkod ile tedarikçinin kodu farklı ürünleri gösteriyor, bu yüzden ikisi de kullanılmadı. Lütfen siz seçin.',
+
+    // Units the shelf is not counted in ----------------------------------------
+    'invoice.line.unitWarning':
+        'Fatura bunu {unit} olarak sayıyor, tek tek değil. Stok ise tek tek tutuluyor.',
+    'invoice.line.unitConfirm': 'Yukarıdaki sayı, gelen tek ürün adedidir',
+    'invoice.line.unitShort': '{unit} olarak sayılmış, adet değil',
 
     // Why a line is not ready yet ---------------------------------------------
     'invoice.problem.noProduct': 'Bu satırın hangi ürüne ait olduğunu seçin.',
@@ -415,6 +438,9 @@ export const tr: Dictionary = {
     'product.form.brand': 'Marka',
     'product.form.supplier': 'Tedarikçi',
     'product.form.supplierHint': 'Kimden aldığınız.',
+    'product.form.similarTitle': 'Bu ürün sizde zaten olabilir',
+    'product.form.similarHint':
+        'İkinci kez eklemek, stok ve maliyet geçmişini ikiye böler. Aynı şeyse yukarıdakini açın.',
     'product.form.notSet': 'Seçilmedi',
     'product.form.newSupplier': 'Yeni',
     'product.form.usingSupplier': '{name} kullanılıyor',
@@ -452,6 +478,7 @@ export const tr: Dictionary = {
         'Yalnızca ad gerekli. Henüz bilmediklerinizi sonra ekleyebilirsiniz.',
     'product.add.saving': 'Ekleniyor…',
     'product.add.submit': 'Ürünü ekle',
+    'product.add.submitAndAnother': 'Ekle ve yenisine geç',
     'product.add.added': '{name} eklendi',
 
     // Edit product -------------------------------------------------------------

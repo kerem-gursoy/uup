@@ -24,6 +24,7 @@ import {
     saveInvoiceDraft,
     type ParsedInvoiceResponse,
     type ApplyInvoiceRequest,
+    type TotalsCheck,
 } from '../services/api';
 import InvoiceLineItem from '../components/InvoiceLineItem';
 import { Button, ConfirmDialog } from '../components/ui';
@@ -38,7 +39,7 @@ import {
 } from '../lib/invoiceReview';
 import { lineStateTokens } from '../lib/lineStateTokens';
 import { useAutosave, type AutosaveStatus } from '../hooks/useAutosave';
-import { formatDate, formatDateRelative } from '../lib/format';
+import { formatDate, formatDateRelative, formatMoney } from '../lib/format';
 import { pluralKey, useT, useTPlural } from '../i18n';
 import { T } from '../i18n/T';
 
@@ -343,6 +344,12 @@ export default function InvoiceReviewPage() {
                     unitPrice: line.unitPrice,
                     applyStock: line.applyStock,
                     applyPrice: line.applyPrice,
+                    // What the document called this line, so the server can
+                    // remember what it was decided to mean. This is the entire
+                    // mechanism by which next month's invoice from this supplier
+                    // arrives already matched.
+                    code: line.code,
+                    description: line.description,
                 })),
             };
 
@@ -484,6 +491,8 @@ export default function InvoiceReviewPage() {
 
                 {showTips && <HowThisWorks onDismiss={dismissTips} />}
 
+                <TotalsWarning check={invoice.totalsCheck} />
+
                 <Progress
                     tally={tally}
                     segments={segments}
@@ -603,6 +612,55 @@ export default function InvoiceReviewPage() {
                 />
             )}
         </div>
+    );
+}
+
+/**
+ * The lines do not add up to the total printed on the invoice.
+ *
+ * This is the only thing on the screen that can tell you about a line which is
+ * not here. Every other check works on a row that exists, so a row the reading
+ * dropped entirely leaves nothing behind to go wrong - the invoice simply comes
+ * back shorter, every remaining line settles cleanly, and a delivery goes
+ * unrecorded with the screen reporting a tidy success.
+ *
+ * Shown rather than blocking, and worded as a question rather than a verdict:
+ * the difference can also be a discount line, a rounding the document does
+ * differently, or a total the reading itself misread. The person with the paper
+ * can see which in a second - the app's job is to make sure they look.
+ */
+function TotalsWarning({ check }: { check: TotalsCheck }) {
+    const t = useT();
+
+    if (check.status !== 'disagrees' || check.difference === null) return null;
+
+    const short = check.difference > 0;
+    const amount = formatMoney(Math.round(Math.abs(check.difference) * 100));
+
+    return (
+        <section className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <AlertTriangle
+                size={20}
+                aria-hidden="true"
+                className="mt-0.5 shrink-0 text-amber-700"
+            />
+            <div className="min-w-0">
+                <h2 className="font-semibold text-amber-950">
+                    {t('invoice.review.totalsTitle')}
+                </h2>
+                <p className="mt-1 text-sm text-amber-900">
+                    {t('invoice.review.totalsBody', {
+                        lines: formatMoney(Math.round(check.linesTotal * 100)),
+                        document: formatMoney(Math.round((check.documentTotal ?? 0) * 100)),
+                    })}
+                </p>
+                <p className="mt-1.5 text-sm text-amber-900">
+                    {short
+                        ? t('invoice.review.totalsShort', { amount })
+                        : t('invoice.review.totalsOver', { amount })}
+                </p>
+            </div>
+        </section>
     );
 }
 

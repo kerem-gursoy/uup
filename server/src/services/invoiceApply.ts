@@ -3,6 +3,7 @@ import type { AppPrisma } from "../lib/prisma.js";
 import { HttpError } from "../lib/httpError.js";
 import { ApplyInvoiceRequest } from "./invoiceTypes.js";
 import { CLEARED_DRAFT } from "./invoiceReview.js";
+import { rememberLineDecisions } from "./productMatching.js";
 import { recordPrice } from "./inventory.js";
 
 /**
@@ -143,6 +144,28 @@ export const applyInvoice = async (
       );
     }
   }
+
+  /*
+   * What this invoice taught us about the supplier's own wording.
+   *
+   * Written here and nowhere else, because this is the only point where a person
+   * has committed to a decision rather than merely looked at one. That is the
+   * whole reason productMatching can treat a stored mapping as certain the next
+   * time this supplier sends an invoice: every row behind it is a choice someone
+   * stood behind, not a guess left on a screen.
+   *
+   * Lines added by hand carry no code or description from any document, so they
+   * teach nothing and are skipped.
+   */
+  const decisions = accepted
+    .filter((line) => (line.description ?? "").trim().length > 0)
+    .map((line) => ({
+      productId: line.productId!,
+      code: line.code ?? null,
+      description: line.description!,
+    }));
+
+  writes.push(...rememberLineDecisions(client, invoice.supplierId, decisions));
 
   // ---- Pass 2: commit atomically ----
   writes.push(
