@@ -14,6 +14,7 @@ import {
     isUsableQuantity,
     lineProblems,
     lineState,
+    needsUnitCheck,
     type LineItemState,
     type LineProblem,
     type LineState,
@@ -182,6 +183,9 @@ function LineSummary({ line }: { line: LineItemState }) {
         line.applyPrice ? t('invoice.line.effectPriceShort') : null,
     ].filter(Boolean);
 
+    const unitUnsettled =
+        line.applyStock && needsUnitCheck(line.unit) && !line.quantityConfirmed;
+
     return (
         <>
             <span className="block text-sm text-slate-600 truncate">
@@ -204,6 +208,18 @@ function LineSummary({ line }: { line: LineItemState }) {
                 })}
                 {effects.length > 0 && ` · ${effects.join(', ')}`}
             </span>
+            {/* Says WHY the row is amber, without being opened.
+                A missing product announces itself above - the chosen product is
+                simply absent. An unconfirmed unit does not: the row shows a
+                matched product, a quantity and a price, all of them fine, and
+                then a "Needs you" chip with nothing anywhere to explain it. The
+                reviewer's only way to find out was to open every amber row in
+                turn and look. */}
+            {unitUnsettled && (
+                <span className="block text-sm text-amber-700 truncate">
+                    {t('invoice.line.unitShort', { unit: line.unit! })}
+                </span>
+            )}
         </>
     );
 }
@@ -297,7 +313,10 @@ function LineEditor({
             matchedBrand: product.brand,
             brand: product.brand ?? line.brand ?? null,
             barcode: line.barcode ?? product.barcode,
-            matchScore: 1,
+            // Chosen by hand, so there is no rule to credit - and any conflict
+            // the matcher refused to resolve has just been resolved by a person.
+            matchedBy: null,
+            matchRefusedBecause: null,
         });
     };
 
@@ -338,24 +357,31 @@ function LineEditor({
             {/* 1. The decision everything else depends on. */}
             <Field label={t('invoice.line.product')} hint={t('invoice.line.productHint')}>
                 {line.productId ? (
-                    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
-                        <span className="min-w-0">
-                            <span className="block font-medium text-slate-900 truncate">
-                                {line.matchedProductName}
-                            </span>
-                            {line.matchedBrand && (
-                                <span className="block text-sm text-slate-500 truncate">
-                                    {line.matchedBrand}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                            <span className="min-w-0">
+                                <span className="block font-medium text-slate-900 truncate">
+                                    {line.matchedProductName}
                                 </span>
-                            )}
-                        </span>
-                        <Button
-                            variant="secondary"
-                            onClick={() => setPicking(true)}
-                            className="shrink-0 min-h-[44px] px-4 text-sm"
-                        >
-                            {t('invoice.line.change')}
-                        </Button>
+                                {line.matchedBrand && (
+                                    <span className="block text-sm text-slate-500 truncate">
+                                        {line.matchedBrand}
+                                    </span>
+                                )}
+                            </span>
+                            <Button
+                                variant="secondary"
+                                onClick={() => setPicking(true)}
+                                className="shrink-0 min-h-[44px] px-4 text-sm"
+                            >
+                                {t('invoice.line.change')}
+                            </Button>
+                        </div>
+                        {/* Why this was filled in, so a reviewer can tell an
+                            identity they can trust at a glance from something
+                            they should look at. Absent when they chose it
+                            themselves - they already know why. */}
+                        {line.matchedBy && <MatchReason evidence={line.matchedBy} />}
                     </div>
                 ) : (
                     <>
@@ -370,7 +396,21 @@ function LineEditor({
                         >
                             {t('invoice.line.choose')}
                         </Button>
-                        {has('noProduct') && (
+                        {/* Two rules named different products, so neither was
+                            used. Worth saying outright: it means the app looked
+                            and found a contradiction, which is a different thing
+                            from never having seen this line before. */}
+                        {line.matchRefusedBecause === 'conflict' && (
+                            <p className="mt-2 flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
+                                <AlertTriangle
+                                    size={16}
+                                    aria-hidden="true"
+                                    className="mt-0.5 shrink-0"
+                                />
+                                {t('invoice.line.matchConflict')}
+                            </p>
+                        )}
+                        {has('noProduct') && line.matchRefusedBecause !== 'conflict' && (
                             <p role="alert" className="mt-2 text-sm text-amber-800">
                                 {t('invoice.problem.noProduct')}
                             </p>
@@ -388,6 +428,22 @@ function LineEditor({
                     htmlFor={quantityId}
                 >
                     <QuantityInput id={quantityId} value={quantityText} onChange={handleQuantity} />
+                    {needsUnitCheck(line.unit) && (
+                        <UnitCheck
+                            unit={line.unit!}
+                            confirmed={Boolean(line.quantityConfirmed)}
+                            unresolved={has('unitUnconfirmed')}
+                            onConfirm={(quantityConfirmed) =>
+                                onChange(index, { quantityConfirmed })
+                            }
+                        />
+                    )}
+                    {/* No separate problem line here. UnitCheck above already
+                        states the situation and offers the one control that
+                        settles it, and repeating that underneath in the same
+                        amber said the same sentence twice in the same colour
+                        four lines apart. The announcement it used to carry now
+                        lives on the box itself. */}
                 </Field>
             )}
 
@@ -499,6 +555,89 @@ function LineEditor({
                     onClose={() => setConfirmingRemove(false)}
                 />
             )}
+        </div>
+    );
+}
+
+/**
+ * How this line came to have a product on it.
+ *
+ * Quiet by design - it is a footnote, not a warning. Every reason it can give is
+ * an exact identity: a barcode, or a mapping a person established themselves by
+ * applying an earlier invoice. There is no "probably" among them, which is why
+ * this can sit here in grey rather than demanding to be checked.
+ */
+function MatchReason({ evidence }: { evidence: NonNullable<LineItemState['matchedBy']> }) {
+    const t = useT();
+
+    const label = {
+        barcode: t('invoice.line.matchedByBarcode'),
+        supplierCode: t('invoice.line.matchedBySupplierCode'),
+        supplierDescription: t('invoice.line.matchedBySupplierDescription'),
+    }[evidence];
+
+    return (
+        <p className="flex items-start gap-1.5 text-sm text-slate-500">
+            <Check size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-emerald-600" />
+            {label}
+        </p>
+    );
+}
+
+/**
+ * The question a case-packed line has to answer before it can be applied.
+ *
+ * "5 KOLI" is a whole number, so every other check on this screen passes it, and
+ * applying it adds 5 to the shelf when 120 arrived. No conversion is offered:
+ * the app does not know how many are in this supplier's case, and a guess would
+ * rebuild the same silent error behind a friendlier face. The person is holding
+ * the delivery note; they can read it.
+ */
+function UnitCheck({
+    unit,
+    confirmed,
+    unresolved,
+    onConfirm,
+}: {
+    unit: string;
+    confirmed: boolean;
+    unresolved: boolean;
+    onConfirm: (confirmed: boolean) => void;
+}) {
+    const t = useT();
+    const id = useId();
+
+    return (
+        <div
+            className={clsx(
+                'mt-2 rounded-xl border p-3',
+                unresolved ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'
+            )}
+        >
+            <p
+                // Announced only while it is actually holding the line up, so a
+                // reviewer who has already settled it is not told again.
+                role={unresolved ? 'alert' : undefined}
+                className={clsx(
+                    'flex items-start gap-2 text-sm',
+                    unresolved ? 'text-amber-900' : 'text-slate-600'
+                )}
+            >
+                <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+                {t('invoice.line.unitWarning', { unit })}
+            </p>
+            <div className="mt-2 flex items-start gap-3">
+                <input
+                    id={id}
+                    type="checkbox"
+                    checked={confirmed}
+                    onChange={(event) => onConfirm(event.target.checked)}
+                    className="mt-0.5 w-6 h-6 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-4 focus:ring-blue-100"
+                />
+                <label htmlFor={id} className="text-sm font-medium text-slate-900 cursor-pointer">
+                    {t('invoice.line.unitConfirm')}
+                </label>
+            </div>
         </div>
     );
 }

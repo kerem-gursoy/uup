@@ -396,6 +396,40 @@ export async function getProductByBarcode(barcode: string): Promise<Product> {
     return handleResponse<Product>(response);
 }
 
+/** A product that already looks like the one being typed. Creates nothing. */
+export interface SimilarProduct {
+    id: number;
+    name: string;
+    brand: string | null;
+    barcode: string | null;
+}
+
+export interface ProductNameCheck {
+    valid: boolean;
+    /** The name exactly as it would be saved, after tidying whitespace. */
+    normalizedName: string;
+    /** Existing products matching once case, accents and punctuation are ignored. */
+    similar: SimilarProduct[];
+}
+
+/**
+ * Reports what already looks like this product, so a near-duplicate can be
+ * headed off while it is being typed rather than discovered months later as two
+ * half-complete stock histories.
+ */
+export async function checkProductName(
+    name: string,
+    options?: { excludeId?: number }
+): Promise<ProductNameCheck> {
+    const params = new URLSearchParams({ name });
+    if (options?.excludeId !== undefined) {
+        params.set('excludeId', String(options.excludeId));
+    }
+
+    const response = await fetchWithCredentials(`${API_BASE_URL}/products/check?${params}`);
+    return handleResponse<ProductNameCheck>(response);
+}
+
 // ============================================================================
 // PRICE & INVENTORY
 // ============================================================================
@@ -511,6 +545,19 @@ export async function uploadInvoice(formData: FormData): Promise<UploadInvoiceRe
 // INVOICE PARSING & APPLYING
 // ============================================================================
 
+/**
+ * Which rule identified the product on a line.
+ *
+ * There is no score alongside this and no "maybe" among the values, because the
+ * server only ever reports an exact, human-established identity - a barcode, or
+ * a mapping somebody confirmed by applying an earlier invoice. Anything less
+ * certain comes back with no product at all.
+ */
+export type MatchEvidence = 'barcode' | 'supplierCode' | 'supplierDescription';
+
+/** Why the server declined to match a line despite having found something. */
+export type MatchRefusal = 'conflict';
+
 export interface ParsedInvoiceLine {
     lineNo: number | null;
     code: string | null;
@@ -523,10 +570,34 @@ export interface ParsedInvoiceLine {
     matchedProductId: number | null;
     matchedProductName: string | null;
     matchedBrand: string | null;
-    matchScore: number;
+    matchedBy: MatchEvidence | null;
+    /** Evidence was found but refused - today, two rules naming different products. */
+    matchRefusedBecause: MatchRefusal | null;
     /** Quantity × unit price does not match the row total printed on the invoice,
      *  usually a misread decimal separator. Worth showing before it is applied. */
     priceMismatch: boolean;
+}
+
+/** The invoice's own totals, as printed on the document. */
+export interface DocumentTotals {
+    subtotal: number | null;
+    vatTotal: number | null;
+    grandTotal: number | null;
+}
+
+/**
+ * Whether the lines that were read account for the total printed on the invoice.
+ *
+ * The only check that can catch a line the reading missed entirely - every other
+ * check validates a row against itself, and a dropped row leaves no row behind.
+ */
+export interface TotalsCheck {
+    status: 'agrees' | 'disagrees' | 'unknown';
+    linesTotal: number;
+    documentTotal: number | null;
+    /** documentTotal − linesTotal. Positive means the lines are short. */
+    difference: number | null;
+    linesMissingTotal: number;
 }
 
 export interface ParsedInvoiceResponse {
@@ -536,6 +607,8 @@ export interface ParsedInvoiceResponse {
     supplierFromDocument: string | null;
     issueDate: string | null;
     currency: string | null;
+    totals: DocumentTotals;
+    totalsCheck: TotalsCheck;
     /**
      * When this reading was taken. Identifies it: a draft is saved against the
      * reading it was made from, so one written before a re-read can be told
@@ -574,6 +647,13 @@ export interface ApplyInvoiceLineInput {
     unitPrice: number | null;
     applyStock: boolean;
     applyPrice: boolean;
+    /**
+     * What the document called this line. Sent back so applying can remember
+     * what the reviewer decided it meant, which is what stops the next invoice
+     * from this supplier asking the same question again.
+     */
+    code?: string | null;
+    description?: string | null;
 }
 
 export interface ApplyInvoiceRequest {

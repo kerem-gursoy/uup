@@ -21,7 +21,8 @@ const parsedLine = (over: Partial<ParsedInvoiceLine> = {}): ParsedInvoiceLine =>
     matchedProductId: 7,
     matchedProductName: 'Çay 500g',
     matchedBrand: 'Rize',
-    matchScore: 0.9,
+    matchedBy: 'barcode',
+    matchRefusedBecause: null,
     priceMismatch: false,
     ...over,
 });
@@ -33,6 +34,14 @@ const parsed = (lines: ParsedInvoiceLine[]): ParsedInvoiceResponse => ({
     supplierFromDocument: 'ACME LTD',
     issueDate: '2026-07-01',
     currency: 'TRY',
+    totals: { subtotal: null, vatTotal: null, grandTotal: null },
+    totalsCheck: {
+        status: 'unknown',
+        linesTotal: 0,
+        documentTotal: null,
+        difference: null,
+        linesMissingTotal: 0,
+    },
     parsedAt: '2026-07-31T10:00:00.000Z',
     lines,
 });
@@ -153,6 +162,55 @@ describe('what stops a line being ready', () => {
         expect(lineProblems(ready({ unitPrice: 0 }))).toContain('price');
         expect(lineProblems(ready({ unitPrice: 0.001 }))).toContain('price');
         expect(lineProblems(ready({ unitPrice: null }))).toContain('price');
+    });
+
+    /*
+     * The quietest failure the pipeline had. Applying writes `quantity` straight
+     * into a stock movement, in pieces - so "1,5 KG" is caught by the whole-number
+     * rule above, but "5 KOLI" of a twenty-four pack is a perfectly good integer
+     * that adds 5 to the shelf when 120 arrived, and nothing downstream ever
+     * questions it.
+     */
+    it('will not apply a case-packed count until somebody confirms it', () => {
+        const koli = ready({ unit: 'KOLI', quantity: 5 });
+
+        expect(lineProblems(koli)).toContain('unitUnconfirmed');
+        expect(lineState(koli)).toBe('attention');
+    });
+
+    it('accepts it once the reviewer says what the piece count is', () => {
+        const confirmed = ready({ unit: 'KOLI', quantity: 120, quantityConfirmed: true });
+
+        expect(lineProblems(confirmed)).toEqual([]);
+        expect(lineState(confirmed)).toBe('ready');
+    });
+
+    it('says nothing about units that already mean single items', () => {
+        for (const unit of ['ADET', 'adet', 'Ad.', 'TANE', 'PCS']) {
+            expect(lineProblems(ready({ unit }))).toEqual([]);
+        }
+    });
+
+    it('says nothing when the document printed no unit at all', () => {
+        // Plenty of invoices have no unit column. Treating "unknown" as
+        // "suspicious" would block every line on those to say nothing useful.
+        expect(lineProblems(ready({ unit: null }))).toEqual([]);
+        expect(lineProblems(ready({ unit: '' }))).toEqual([]);
+    });
+
+    it('does not ask about units when stock is not being updated', () => {
+        // Nothing is going onto the shelf, so how the supplier counted it is
+        // beside the point.
+        const priceOnly = ready({ unit: 'KG', quantity: null, applyStock: false });
+        expect(lineProblems(priceOnly)).toEqual([]);
+    });
+
+    it('never treats a confirmation as carried over from the reading', () => {
+        // linesFromParse must not answer, on the reviewer's behalf, the one
+        // question the app cannot check.
+        const [line] = linesFromParse(parsed([parsedLine({ unit: 'KOLI', quantity: 5 })]));
+        expect(line.quantityConfirmed).toBe(false);
+        expect(lineProblems(line)).toContain('unitUnconfirmed');
     });
 
     it('catches a line that is included but would change nothing', () => {

@@ -14,35 +14,25 @@
  * The loose layer matters for this data in particular: the existing suppliers
  * were entered without Turkish diacritics ("Celikayna", "Duru Ahsap"), so the
  * likeliest duplicate is someone later typing "Çelikayna" correctly.
+ *
+ * The folding itself now lives in textKeys.ts, because products and invoice
+ * lines need exactly the same rules. These stay as named wrappers: they are what
+ * the supplier code reads as, and the unique index in the database is defined in
+ * terms of supplierNameKey specifically.
  */
-
-/** Collapses runs of any whitespace to one space and trims the ends. */
-const collapseWhitespace = (value: string) => value.replace(/\s+/g, " ").trim();
+import { displayText, textFingerprint, textKey } from "./textKeys.js";
 
 /**
  * The name as it should be stored: tidied, but with the user's own capitalisation
  * and spelling preserved, because that is what they will want to read back.
  */
-export const supplierDisplayName = (value: string) =>
-  collapseWhitespace(value.normalize("NFKC"));
+export const supplierDisplayName = displayText;
 
 /**
  * Strict identity. "xyz", "XYZ", "Xyz" and " Xyz " all produce the same key, so
  * only one of them can exist.
  */
-export const supplierNameKey = (value: string) =>
-  supplierDisplayName(value).toLowerCase();
+export const supplierNameKey = textKey;
 
-/**
- * Loose identity, for spotting probable duplicates.
- *
- * Accents are removed by decomposing and dropping the combining marks. The
- * Turkish dotless "ı" is a base letter that does not decompose, so it is folded
- * to "i" explicitly - without that, "Işık" and "ISIK" would look unrelated.
- */
-export const supplierNameFingerprint = (value: string) =>
-  supplierNameKey(value)
-    .replace(/ı/g, "i")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^\p{L}\p{N}]+/gu, "");
+/** Loose identity, for spotting probable duplicates. */
+export const supplierNameFingerprint = textFingerprint;

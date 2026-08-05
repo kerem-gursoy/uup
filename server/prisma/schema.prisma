@@ -13,12 +13,21 @@ datasource db {
 model Product {
   id             Int             @id @default(autoincrement())
   name           String
+  /// `name` with case, spacing, accents and punctuation folded away - see
+  /// services/textKeys.ts. Deliberately NOT unique: two products may honestly
+  /// share it ("Su 5L" from two suppliers), so this warns rather than forbids.
+  /// It is also what product search matches on, which is what makes searching
+  /// "ISIK" find "Işık".
+  nameFingerprint String?
   barcode        String?         @unique
   brand          String?
   supplierId     Int?
   supplier       Supplier?       @relation(fields: [supplierId], references: [id])
   priceHistory   PriceHistory[]
   stockMovements StockMovement[]
+  supplierItems  SupplierItem[]
+
+  @@index([nameFingerprint])
 }
 
 model Supplier {
@@ -30,6 +39,42 @@ model Supplier {
   nameKey   String    @unique
   products  Product[]
   invoices  Invoice[]
+  items     SupplierItem[]
+}
+
+/// What this supplier's own wording for a line turned out to mean, the last time
+/// a human applied an invoice containing it.
+///
+/// This is the app's entire memory of invoice-to-product matching, and it is
+/// built only from decisions a person actually made and applied - never from a
+/// guess. That is what lets services/productMatching.ts reuse a row here as
+/// certain evidence rather than as a suggestion.
+///
+/// `kind` says what sort of evidence the row holds:
+///   CODE  - the supplier's stock code (Stok Kodu), folded by codeKey()
+///   DESC  - the line description, folded by textFingerprint(), for the many
+///           suppliers who print no code at all
+model SupplierItem {
+  id           Int      @id @default(autoincrement())
+  supplierId   Int
+  supplier     Supplier @relation(fields: [supplierId], references: [id])
+  kind         String
+  /// The folded code or description. Unique per supplier and kind, so the most
+  /// recent human decision replaces the previous one rather than competing.
+  value        String
+  productId    Int
+  product      Product  @relation(fields: [productId], references: [id])
+  /// The text as it was printed, kept so the review screen can say *why* a line
+  /// matched without having to un-fold `value`.
+  lastSeenText String?
+  /// How many applied invoices have confirmed this mapping. Not used to decide a
+  /// match - one human confirmation is already enough - but it is the number
+  /// worth looking at when a mapping turns out to be wrong.
+  timesSeen    Int      @default(1)
+  updatedAt    DateTime @default(now())
+
+  @@unique([supplierId, kind, value])
+  @@index([productId])
 }
 
 model Invoice {

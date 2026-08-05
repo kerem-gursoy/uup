@@ -4,6 +4,7 @@ import { Camera, FileText, Loader2, Plus, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage, getSuppliers, uploadInvoice, type Supplier } from '../services/api';
 import { formatFileSize, compareNames } from '../lib/format';
+import { downscaleImage } from '../lib/image';
 import { Button, Card, EmptyBlock, Field, Section, Select } from '../components/ui';
 import { useT } from '../i18n';
 
@@ -82,9 +83,14 @@ export default function InvoiceUploadPage() {
         setUploading(true);
 
         try {
+            // Done here rather than on picking, so the preview above is of what
+            // the user actually chose and the wait happens under the button they
+            // just pressed. Returns the original if there is nothing to gain.
+            const toSend = await downscaleImage(file);
+
             const formData = new FormData();
             formData.append('supplierId', String(selectedSupplierId));
-            formData.append('file', file);
+            formData.append('file', toSend);
 
             const result = await uploadInvoice(formData);
             if (!result?.invoiceId) throw new Error('Missing invoice id in server response');

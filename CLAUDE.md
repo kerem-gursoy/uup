@@ -37,11 +37,16 @@ cd client && npx vitest run src/lib/format.test.ts        # one file
 cd client && npx vitest run -t "starts every line selected"   # one test by name
 
 cd server && npm run typecheck   # tsc --noEmit
+cd server && npm test            # vitest run
 cd server && npm run build       # wrangler deploy --dry-run, the only server-side build check
 cd server && npm run types       # regenerate worker-configuration.d.ts after changing bindings
 ```
 
-Tests are client-only (5 files, vitest + jsdom). There is no server test suite.
+Most tests are client-side (vitest + jsdom). The server suite is small and
+deliberately narrow: it covers only the pure logic where being quietly wrong
+writes bad numbers into a real stock history - product matching and the invoice
+totals check. It runs in plain Node with no Workers runtime and no database, so
+anything needing a binding is not testable there and is not meant to be.
 
 **Deploy** builds the client and ships the Worker in one step:
 
@@ -132,6 +137,44 @@ entries read as "nothing cached" - no migration needed.
 `services/gemini.ts` holds a long Turkish-specific prompt. The number-format section
 is not cosmetic: `invoiceApply` does `Math.round(unitPrice * 100)`, so a "1.234,56"
 misread as 1.234 writes 123 kuruş instead of ₺1234.56 and nothing downstream notices.
+
+**Only what the document says is cached.** `parsedJson` holds the lines and the
+printed totals; the supplier name, the product matches and the totals check are all
+resolved on *every* read in `buildParsedResponse`. That is what makes a product
+created mid-review match as soon as the screen is reopened, with no paid re-read. Do
+not move any of them into the cache to save a query.
+
+**Matching is certain or absent** - `services/productMatching.ts`. Three rules, all
+exact lookups: a barcode (GTIN check digit verified first, which is what makes it
+safe against a misread digit), a supplier's stock code, or a line's wording. The last
+two only ever come from `SupplierItem`, which is written *only* on apply - so every
+mapping is a decision a person committed to, never a guess. Two rules naming
+different products is a conflict, and a conflict returns no match rather than picking
+a winner. There is deliberately no fuzzy name matching: "AYÇİÇEK YAĞI 5L" and
+"…1L" differ by two characters and are different products.
+
+**The totals check** (`services/invoiceTotals.ts`) is the only thing that can catch a
+line the model dropped, since a row that was never returned leaves no row to
+validate. It compares the line totals against the printed *subtotal* - never the
+grand total, which differs by VAT and would disagree on every correct invoice.
+
+**Units are shown, never converted.** Stock is pieces. A line billed in KOLI or KG
+blocks on the review screen until a person confirms the piece count (`needsUnitCheck`
+in `client/src/lib/invoiceReview.ts`). "1,5 KG" was always caught by the whole-number
+rule; "5 KOLI" is an integer that silently added 5 to the shelf when 120 arrived,
+which is what that guard exists for. The app does not know a supplier's case size and
+does not guess.
+
+Gemini token usage is logged per parse and stored on the cached reading. Nothing acts
+on it: there is no `thinkingConfig` and no budget, on purpose. It is recorded so the
+cost is *observable* if it ever needs capping - `thoughtsTokens` bills at the output
+rate and is otherwise invisible.
+
+`Product.nameFingerprint` powers Turkish-aware search and near-duplicate detection.
+It is maintained on every product write; rows predating the column are backfilled
+with `npm run db:backfill-fingerprints` (the folding needs Unicode normalisation
+SQLite cannot do, so it cannot be a SQL migration). Search ORs it against a plain
+`contains`, so an un-backfilled product is never invisible.
 
 ### i18n
 

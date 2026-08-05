@@ -1,7 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { HttpError } from "../lib/httpError.js";
+import { checkTotals } from "./invoiceTotals.js";
+import { matchInvoiceLines } from "./productMatching.js";
 import {
   CachedInvoiceParse,
+  DocumentLine,
   InvoiceDraft,
   InvoiceReviewState,
   ParsedInvoiceResponse,
@@ -30,7 +33,7 @@ import {
  * is simply read again - no migration, and no chance of handing the review
  * screen a shape it no longer understands.
  */
-const PARSE_CACHE_VERSION = 1;
+const PARSE_CACHE_VERSION = 2;
 
 type StoredParse = CachedInvoiceParse & { v: number };
 
@@ -103,7 +106,9 @@ export const decodeParse = (json: string | null): CachedInvoiceParse | null => {
       supplierFromDocument: stored.supplierFromDocument ?? null,
       issueDate: stored.issueDate ?? null,
       currency: stored.currency ?? null,
+      totals: stored.totals ?? { subtotal: null, vatTotal: null, grandTotal: null },
       lines: stored.lines,
+      usage: stored.usage ?? null,
     };
   } catch {
     // Unreadable JSON is treated the same as no cache at all. Nothing is lost
@@ -116,22 +121,63 @@ export const encodeParse = (parse: CachedInvoiceParse): string =>
   JSON.stringify({ v: PARSE_CACHE_VERSION, ...parse } satisfies StoredParse);
 
 /**
- * The reading joined back to the live Supplier row.
+ * The reading joined back to everything that lives outside it.
  *
- * Only the document half is cached, so a supplier renamed since the invoice was
- * read shows its current name here rather than the one frozen at parse time.
+ * Only the document half is cached, so three things are resolved here on every
+ * single read rather than being frozen at parse time:
+ *
+ *   the supplier name  - renaming a supplier updates every invoice it sent.
+ *
+ *   product matches    - the catalogue and what past invoices taught us both
+ *                        change between one visit and the next. Resolving live
+ *                        means a product created two minutes ago in the picker
+ *                        matches the moment the screen is reopened, where a
+ *                        cached match would keep saying "no product" until
+ *                        somebody paid for a re-read.
+ *
+ *   the totals check   - pure arithmetic over the cached lines, so there is
+ *                        nothing to gain by storing the answer.
+ *
+ * Matching costs two indexed queries against D1, batched across the whole
+ * invoice, which is cheap next to the Gemini call it sits behind.
  */
-export const buildParsedResponse = (
+export const buildParsedResponse = async (
+  client: Prisma.TransactionClient,
   invoice: { id: number; supplierId: number; supplier: { name: string } },
   parse: CachedInvoiceParse,
   parsedAt: Date
-): ParsedInvoiceResponse => ({
-  invoiceId: invoice.id,
-  supplierId: invoice.supplierId,
-  supplierName: invoice.supplier.name,
-  parsedAt: parsedAt.toISOString(),
-  ...parse,
-});
+): Promise<ParsedInvoiceResponse> => {
+  const matches = await matchInvoiceLines(client, invoice.supplierId, parse.lines);
+
+  const lines = parse.lines.map((line: DocumentLine, index: number) => {
+    const { match, refusedBecause } = matches[index] ?? {
+      match: null,
+      refusedBecause: null,
+    };
+
+    return {
+      ...line,
+      matchedProductId: match?.productId ?? null,
+      matchedProductName: match?.productName ?? null,
+      matchedBrand: match?.productBrand ?? null,
+      matchedBy: match?.matchedBy ?? null,
+      matchRefusedBecause: refusedBecause,
+    };
+  });
+
+  return {
+    invoiceId: invoice.id,
+    supplierId: invoice.supplierId,
+    supplierName: invoice.supplier.name,
+    supplierFromDocument: parse.supplierFromDocument,
+    issueDate: parse.issueDate,
+    currency: parse.currency,
+    totals: parse.totals,
+    totalsCheck: checkTotals(parse.lines, parse.totals),
+    lines,
+    parsedAt: parsedAt.toISOString(),
+  };
+};
 
 const decodeDraft = (
   json: string | null,
@@ -167,7 +213,7 @@ export const readInvoiceReviewState = async (
   }
 
   return {
-    parsed: buildParsedResponse(invoice, parse, invoice.parsedAt),
+    parsed: await buildParsedResponse(client, invoice, parse, invoice.parsedAt),
     // A draft is only ever stored against the current reading, so no staleness
     // check is needed on the way out - see saveInvoiceDraft for the way in.
     draft: decodeDraft(invoice.draftJson, invoice.draftUpdatedAt),
